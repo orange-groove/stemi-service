@@ -1,15 +1,14 @@
 import io
 from pathlib import Path
 import select
-from shutil import rmtree
 import subprocess as sp
 import sys
 from typing import Dict, Tuple, Optional, IO
 
 model = "htdemucs"
 extensions = ["mp3", "wav", "ogg", "flac"]  # we will look for all those file types.
-two_stems = None   # only separate one stems from the rest, for instance
-# two_stems = "vocals"
+# two_stems = None   # only separate one stems from the rest, for instance
+two_stems = "vocals"
 
 # Options for the output audio.
 mp3 = True
