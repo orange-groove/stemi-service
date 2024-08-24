@@ -1,74 +1,55 @@
 from flask import Blueprint, request, jsonify
-from pathlib import Path
-from shutil import rmtree
 import os
-from flaskr.utils.supabase_utils import supabase, upload_to_supabase, get_public_url, generate_directory_name
-from flaskr.utils.helpers import separate
+from werkzeug.utils import secure_filename
+from flaskr.utils.helpers import separate, create_song_entry, upload_song_stems_and_update_db
 
-from flask import Flask, jsonify, abort
-from flaskr.utils.supabase_utils import list_tracks_for_song
+user_bp = Blueprint('user_bp', __name__)
 
-songs_bp = Blueprint('user', __name__)
-app = Flask(__name__)
+# Configure the upload and output folders
+UPLOAD_FOLDER = os.path.expanduser('~/tmp_uploads')
+OUTPUT_FOLDER = os.path.expanduser('~/tmp_output')
 
-@app.route('<user_id>/song/<song_id>/tracks', methods=['GET'])
-def get_tracks(song_id):
-    # Retrieve the tracks from Supabase
-    tracks = list_tracks_for_song(song_id)
+@user_bp.route('/<user_id>/song', methods=['POST'])
+def upload_song(user_id):
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
     
-    if tracks is None:
-        return abort(404, description="Song ID not found or no tracks available")
+    name = request.form.get('name')
+    description = request.form.get('description')
+    stems = request.form.get('stems')
+    algorithm = request.form.get('algorithm', 'htdemucs')
+    file = request.files['file']
     
-    return jsonify({
-        "name": "test",
-        "tracks": tracks
-    })
+    if not name or not description:
+        return jsonify({"error": "Missing name or description"}), 400
+    
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    
+    if file:
+        filename = secure_filename(file.filename)
+        song_name = os.path.splitext(filename)[0]
+        user_folder = os.path.join(UPLOAD_FOLDER, user_id)
+        os.makedirs(user_folder, exist_ok=True)
 
-if __name__ == '__main__':
-    app.run(debug=True)
+        file_path = os.path.join(user_folder, filename)
+        file.save(file_path)
 
-@songs_bp.route('<user_id>/song', methods=['POST'])
-def upload_song():
-    user_name = "default_user"  # Replace this with actual user identification logic
-    directory_name = generate_directory_name(user_name)
-    
-    in_path = Path('tmp_in')
-    out_path = Path('tmp_out')
-    
-    if in_path.exists():
-        rmtree(in_path)
-    in_path.mkdir()
-    
-    if out_path.exists():
-        rmtree(out_path)
-    out_path.mkdir()
+        # Prepare the output path
+        output_path = os.path.join(OUTPUT_FOLDER, user_id, song_name)
+        os.makedirs(output_path, exist_ok=True)
 
-    uploaded_files = request.files.getlist('file')
-    
-    for uploaded_file in uploaded_files:
-        file_path = in_path / uploaded_file.filename
-        uploaded_file.save(file_path)
+        # Call the separate utility to process the song
+        separate(file_path, output_path, algorithm)
 
-    # Replace this with your actual separation logic
-    separate(in_path, out_path)
-    
-    # Upload each separated track to Supabase and collect the URLs
-    track_urls = []
-    for root, dirs, files in os.walk(out_path):
-        for file in files:
-            file_path = Path(root) / file
-            storage_path = f"{directory_name}/{file_path.name}"
-            upload_to_supabase(str(file_path), storage_path)
-            public_url = get_public_url(storage_path)
-            track_urls.append({'name': file, 'url': public_url})
-    
-    return jsonify({"tracks": track_urls})
+        # Create song entry in the database
+        song_entry = create_song_entry(name, description, user_id)
+        
+        # Upload stems to Supabase and update the database
+        stem_names = ['vocals', 'bass', 'drums', 'other']  # Example stem names
+        updated_song_entry = upload_song_stems_and_update_db(song_entry, output_path, stem_names)
 
-@songs_bp.route('/<user_id>/songs', methods=['GET'])
-def get_user_songs(user_id):
-    response = supabase.table('user_songs').select("*").eq("user_id", user_id).execute()
-    
-    if response.status_code != 200:
-        return jsonify({"error": "Error fetching songs"}), response.status_code
-    
-    return jsonify({"songs": response.data})
+        return jsonify({
+            "message": "File uploaded, processed, and saved successfully",
+            "song_entry": updated_song_entry
+        }), 200
