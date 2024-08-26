@@ -9,7 +9,7 @@ from flaskr.utils.helpers import (
     detect_key_and_tempo_changes
 )
 from concurrent.futures import ThreadPoolExecutor
-executor = ThreadPoolExecutor(max_workers=2)
+executor = ThreadPoolExecutor(max_workers=2)  # Adjust number of workers as needed
 
 app = Flask(__name__)
 # Define ThreadPoolExecutor
@@ -44,27 +44,23 @@ def upload_song(user_id):
         file_path = os.path.join(user_folder, filename)
         file.save(file_path)
 
-        # Prepare the output path
         output_path = os.path.join(OUTPUT_FOLDER, user_id, song_name)
         os.makedirs(output_path, exist_ok=True)
 
-        # Run both tasks in parallel
-        with executor as pool:
-            future_key_changes = pool.submit(detect_key_and_tempo_changes, file_path)
-            future_separation = pool.submit(separate, file_path, output_path, algorithm)
+        key_and_tempo_changes = detect_key_and_tempo_changes(file_path)
+        key_changes = key_and_tempo_changes['key_changes']
+        tempo_changes = key_and_tempo_changes['tempo_changes']
 
-            key_changes = future_key_changes.result()
-            future_separation.result()  # Waits for separation to complete
-
+        # separate(file_path, output_path, algorithm)
+        
         # Create song entry in the database
         song_entry = create_song_entry(name, description, user_id)
         
         # Upload stems to Supabase and update the database
         stem_names = ['vocals', 'bass', 'drums', 'other']  # Example stem names
-        updated_song_entry = upload_song_stems_and_update_db(song_entry, output_path, stem_names)
+        updated_song_entry = upload_song_stems_and_update_db(song_entry, output_path, stem_names, key_changes, tempo_changes)
 
         return jsonify({
             "message": "File uploaded, processed, and saved successfully",
             "song_entry": updated_song_entry,
-            "key_changes": key_changes
         }), 200

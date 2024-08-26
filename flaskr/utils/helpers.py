@@ -7,6 +7,7 @@ import logging
 import librosa
 import numpy as np
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -92,7 +93,7 @@ def upload_to_supabase(user_id, song_id, file_path, track_name):
         logger.error("An error occurred while uploading the file to Supabase: %s", e)
         raise e
     
-def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
+def upload_song_stems_and_update_db(song_entry, output_path, stem_names, key_changes, tempo_changes):
         user_id = song_entry['user_id']
         song_id = song_entry['id']
         tracks = []
@@ -109,7 +110,11 @@ def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
                 })
             
             # Update the song entry with the track URLs
-            response = supabase.table("song").update({"tracks": tracks}).eq("id", song_id).execute()
+            response = supabase.table("song").update({
+                "tracks": tracks, 
+                "key_changes": key_changes, 
+                "tempo_changes": tempo_changes
+            }).eq("id", song_id).execute()
             
             return response.data[0]
         
@@ -120,69 +125,76 @@ def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
 
 def detect_key_and_tempo_changes(file_path):
     # Load the audio file
-    y, sr = librosa.load(file_path, sr=None)  # Use the native sample rate of the file
-
-    # Beat tracking to find the beats
+    y, sr = librosa.load(file_path, sr=None)
+    
+    # Check if audio file is loaded correctly
+    if np.all(y == 0):
+        raise ValueError("Audio file is silent or corrupted.")
+    
+    # Beat tracking to find beats and tempo
     tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+    print(f"Tempo: {tempo}")
+    print(f"Beats: {beats}")
     
     # Harmonic component extraction
     harmonic, _ = librosa.effects.hpss(y)
     
+    # Debugging: Check harmonic signal
+    if np.all(harmonic == 0):
+        raise ValueError("Harmonic component is silent.")
+    print(f"Harmonic signal shape: {harmonic.shape}")
+    
     # Chroma feature extraction
     chroma = librosa.feature.chroma_cqt(y=harmonic, sr=sr)
+    
+    # Debugging: Check chroma features
+    print(f"Chroma feature shape: {chroma.shape}")
+    print(f"Chroma feature sample: {chroma[:, :10]}")
 
     # Mapping chroma index to musical notes
     note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-
+    
     def detect_key(chroma_slice):
         key_index = np.argmax(np.sum(chroma_slice, axis=1))
         return note_names[key_index % 12]
 
-    # Initialize lists for key and tempo changes
+    
     keys_per_beat = []
     tempo_changes = []
 
-    # Calculate the initial tempo
     previous_tempo = tempo
     tempo_changes.append({'beat': 0, 'tempo': float(previous_tempo)})
 
-    # Process each beat for key changes
     for i in range(len(beats) - 1):
-        start = int(beats[i] * sr)  # Convert beat to sample index
-        end = int(beats[i + 1] * sr)  # Convert beat to sample index
-        
+        start = int(beats[i])
+        end = int(beats[i + 1])
+
         if end > len(y):
             end = len(y)
-        
-        # Extract the chroma features for this beat segment
+
         chroma_slice = chroma[:, start:end]
         key = detect_key(chroma_slice)
-        keys_per_beat.append({'beat': i, 'key': key})
+        keys_per_beat.append(key)
 
-        # Check for tempo change
         current_tempo, _ = librosa.beat.beat_track(y=y[start:end], sr=sr)
-        if np.abs(current_tempo - previous_tempo) > 1:  # Adjust threshold as needed
+        if np.abs(current_tempo - previous_tempo) > 1:
             tempo_changes.append({'beat': i + 1, 'tempo': float(current_tempo)})
             previous_tempo = current_tempo
 
-    # Detect the final key for the last segment
-    if len(beats) > 0:
-        start = int(beats[-1] * sr)
-        chroma_slice = chroma[:, start:]
-        final_key = detect_key(chroma_slice)
-        keys_per_beat.append({'beat': len(beats), 'key': final_key})
+    key_changes = []
+    previous_key = None
 
-    # Ensure there's a final entry for the last tempo if no tempo changes
+    for beat, key in enumerate(keys_per_beat):
+        if key != previous_key:
+            key_changes.append({'beat': beat, 'key': key})
+            previous_key = key
+
     if len(tempo_changes) == 1 and tempo_changes[0]['beat'] == 0:
         tempo_changes.append({'beat': len(beats), 'tempo': float(previous_tempo)})
 
-    # Combine results into JSON format
     result = {
-        'tempo_changes': tempo_changes,
-        'key_changes': keys_per_beat
+        'key_changes': key_changes,
+        'tempo_changes': tempo_changes
     }
 
-    # Convert to JSON string
-    json_output = json.dumps(result, indent=4)
-    
-    return json.loads(json_output)
+    return result
