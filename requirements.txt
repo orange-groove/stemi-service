@@ -5,3 +5,7 @@ flask==3.0.3
 supabase==2.7.2
 python-dotenv==1.0.1
 psycopg2==2.9.9
+flask-cors==4.0.1
+flask-socketio==5.3.6
+librosa===0.10.2.post1
+tqdm===4.66.5

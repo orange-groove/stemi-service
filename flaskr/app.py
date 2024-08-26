@@ -1,9 +1,11 @@
 from flask import Flask
+from flask_cors import CORS
 from flaskr.config import Config
 from flaskr.routes import routes_bp
 
 def create_app():
     app = Flask(__name__)
+    CORS(app)
     app.config.from_object(Config)  # Load the config
 
     # Register the routes blueprint with /api/v1 prefix

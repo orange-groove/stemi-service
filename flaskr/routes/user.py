@@ -1,11 +1,20 @@
-from flask import Blueprint, request, jsonify
+from flask import Flask, Blueprint, request, jsonify
 import os
+
 from werkzeug.utils import secure_filename
-from flaskr.utils.helpers import separate, create_song_entry, upload_song_stems_and_update_db
+from flaskr.utils.helpers import (
+    separate, 
+    create_song_entry, 
+    upload_song_stems_and_update_db, 
+    detect_key_and_tempo_changes
+)
+from concurrent.futures import ThreadPoolExecutor
+executor = ThreadPoolExecutor(max_workers=2)
+
+app = Flask(__name__)
+# Define ThreadPoolExecutor
 
 user_bp = Blueprint('user_bp', __name__)
-
-# Configure the upload and output folders
 UPLOAD_FOLDER = os.path.expanduser('~/tmp_uploads')
 OUTPUT_FOLDER = os.path.expanduser('~/tmp_output')
 
@@ -39,8 +48,13 @@ def upload_song(user_id):
         output_path = os.path.join(OUTPUT_FOLDER, user_id, song_name)
         os.makedirs(output_path, exist_ok=True)
 
-        # Call the separate utility to process the song
-        separate(file_path, output_path, algorithm)
+        # Run both tasks in parallel
+        with executor as pool:
+            future_key_changes = pool.submit(detect_key_and_tempo_changes, file_path)
+            future_separation = pool.submit(separate, file_path, output_path, algorithm)
+
+            key_changes = future_key_changes.result()
+            future_separation.result()  # Waits for separation to complete
 
         # Create song entry in the database
         song_entry = create_song_entry(name, description, user_id)
@@ -51,5 +65,6 @@ def upload_song(user_id):
 
         return jsonify({
             "message": "File uploaded, processed, and saved successfully",
-            "song_entry": updated_song_entry
+            "song_entry": updated_song_entry,
+            "key_changes": key_changes
         }), 200
