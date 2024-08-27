@@ -2,7 +2,6 @@ from flask import Flask, Blueprint, request, jsonify
 import os
 import librosa
 import soundfile as sf
-import numpy as np
 from werkzeug.utils import secure_filename
 from flaskr.utils.helpers import (
     separate, 

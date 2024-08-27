@@ -1,13 +1,10 @@
 import os
-import json
 import shutil
 import demucs.separate
 from flaskr.supabase_client import supabase
 import logging
 import librosa
 import numpy as np
-from tqdm import tqdm
-import matplotlib.pyplot as plt
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
