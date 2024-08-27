@@ -1,18 +1,20 @@
 from flask import Flask, Blueprint, request, jsonify
 import os
-
+import librosa
+import soundfile as sf
+import numpy as np
 from werkzeug.utils import secure_filename
 from flaskr.utils.helpers import (
     separate, 
     create_song_entry, 
     upload_song_stems_and_update_db, 
-    detect_key_and_tempo_changes
+    analyze_audio
 )
 from concurrent.futures import ThreadPoolExecutor
+
 executor = ThreadPoolExecutor(max_workers=2)  # Adjust number of workers as needed
 
 app = Flask(__name__)
-# Define ThreadPoolExecutor
 
 user_bp = Blueprint('user_bp', __name__)
 UPLOAD_FOLDER = os.path.expanduser('~/tmp_uploads')
@@ -24,13 +26,13 @@ def upload_song(user_id):
         return jsonify({"error": "No file part"}), 400
     
     name = request.form.get('name')
-    description = request.form.get('description')
+    description = request.form.get('artist')
     stems = request.form.get('stems')
     algorithm = request.form.get('algorithm', 'htdemucs')
     file = request.files['file']
     
     if not name or not description:
-        return jsonify({"error": "Missing name or description"}), 400
+        return jsonify({"error": "Missing name or artist"}), 400
     
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
@@ -47,12 +49,36 @@ def upload_song(user_id):
         output_path = os.path.join(OUTPUT_FOLDER, user_id, song_name)
         os.makedirs(output_path, exist_ok=True)
 
-        key_and_tempo_changes = detect_key_and_tempo_changes(file_path)
-        key_changes = key_and_tempo_changes['key_changes']
-        tempo_changes = key_and_tempo_changes['tempo_changes']
+        # Separate the stems
+        separate(file_path, output_path, algorithm)
 
-        # separate(file_path, output_path, algorithm)
+        # Paths to the generated stems
+        drum_path = os.path.join(output_path, 'drums.mp3')
+        bass_path = os.path.join(output_path, 'bass.mp3')
+        other_path = os.path.join(output_path, 'other.mp3')
         
+        combined_audio_path = os.path.join(output_path, "combined_no_vocals.wav")
+
+        combined_audio_data = None
+
+        # Load and combine the drum, bass, and other stems (excluding vocals)
+        for stem_path in [drum_path, bass_path, other_path]:
+            y, sr = librosa.load(stem_path, sr=None)
+
+            if combined_audio_data is None:
+                combined_audio_data = y
+            else:
+                combined_audio_data += y
+
+        if combined_audio_data is not None:
+            combined_audio_data /= 3  # Normalize the combined signal
+            sf.write(combined_audio_path, combined_audio_data, sr)
+
+        # Analyze the combined audio without vocals
+        analyzed_audio_data = analyze_audio(combined_audio_path)
+        key_changes = analyzed_audio_data['key_changes']
+        tempo_changes = analyzed_audio_data['tempo_changes']
+
         # Create song entry in the database
         song_entry = create_song_entry(name, description, user_id)
         

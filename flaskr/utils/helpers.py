@@ -52,11 +52,11 @@ def separate(in_path, out_path, algorithm):
     else:
         print(f"Demucs separation completed successfully. Output files: {os.listdir(out_path)}")
 
-def create_song_entry(name, description, user_id):
+def create_song_entry(name, artist, user_id):
     # Create the song entry dictionary
     song_entry = {
         "name": name,
-        "description": description,
+        "artist": artist,
         "user_id": user_id,
         "tracks": []  # Initially empty, will be populated later
     }
@@ -123,7 +123,7 @@ def upload_song_stems_and_update_db(song_entry, output_path, stem_names, key_cha
             raise e
 
 
-def detect_key_and_tempo_changes(file_path):
+def analyze_audio(file_path):
     # Load the audio file
     y, sr = librosa.load(file_path, sr=None)
     
