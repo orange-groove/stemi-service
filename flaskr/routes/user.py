@@ -26,12 +26,12 @@ def upload_song(user_id):
         return jsonify({"error": "No file part"}), 400
     
     name = request.form.get('name')
-    description = request.form.get('artist')
+    artist = request.form.get('artist')
     stems = request.form.get('stems')
     algorithm = request.form.get('algorithm', 'htdemucs')
     file = request.files['file']
     
-    if not name or not description:
+    if not name or not artist:
         return jsonify({"error": "Missing name or artist"}), 400
     
     if file.filename == '':
@@ -80,7 +80,7 @@ def upload_song(user_id):
         tempo_changes = analyzed_audio_data['tempo_changes']
 
         # Create song entry in the database
-        song_entry = create_song_entry(name, description, user_id)
+        song_entry = create_song_entry(name, artist, user_id)
         
         # Upload stems to Supabase and update the database
         stem_names = ['vocals', 'bass', 'drums', 'other']  # Example stem names
