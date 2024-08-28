@@ -7,7 +7,8 @@ from flaskr.utils.helpers import (
     separate, 
     create_song_entry, 
     upload_song_stems_and_update_db, 
-    analyze_audio
+    analyze_audio,
+    get_song_info
 )
 from concurrent.futures import ThreadPoolExecutor
 
@@ -89,3 +90,19 @@ def upload_song(user_id):
             "message": "File uploaded, processed, and saved successfully",
             "song_entry": updated_song_entry,
         }), 200
+
+@user_bp.route('/<user_id>/song/info', methods=['GET'])
+def song_info(user_id):
+    # Get 'artist' and 'song' from the query parameters
+    artist = request.args.get('artist')
+    name = request.args.get('name')
+    
+    if not artist or not name:
+        return jsonify({"error": "Both 'artist' and 'song' query parameters are required."}), 400
+
+    # Get the song information using the utility function
+    info = get_song_info(artist, name)
+    
+    
+    # Return the information as a JSON response
+    return jsonify({"user_id": user_id, "artist": artist, "name": name, "info": info})

@@ -5,6 +5,8 @@ from flaskr.supabase_client import supabase
 import logging
 import librosa
 import numpy as np
+from openai import OpenAI
+client = OpenAI()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -195,3 +197,22 @@ def analyze_audio(file_path):
     }
 
     return result
+
+def get_song_info(artist_name, song_name):
+    # Define the roles and initial message
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant that provides detailed information about songs and artists."},
+        {"role": "user", "content": f"Please provide information about the song '{song_name}' by the artist '{artist_name}'."}
+    ]
+
+    # Make the chat request
+    completion = client.chat.completions.create(
+        model="gpt-4",
+        messages=messages,
+        max_tokens=150,  # You can adjust the max_tokens depending on how much detail you want
+        temperature=0.7  # Adjust the creativity of the response
+    )
+
+    # Extract the content from the response
+    song_info = completion.choices[0].message.model_dump_json()
+    return song_info
