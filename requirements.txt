@@ -58,6 +58,7 @@ omegaconf==2.3.0
 openai==1.42.0
 openunmix==1.3.0
 packaging==24.1
+pandas==2.2.2
 platformdirs==4.2.2
 pooch==1.8.2
 postgrest==0.16.10
@@ -67,6 +68,7 @@ pydantic==2.8.2
 pydantic_core==2.20.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
+pytz==2024.1
 PyYAML==6.0.2
 realtime==2.0.2
 referencing==0.35.1
@@ -93,6 +95,7 @@ tqdm==4.66.5
 treetable==0.2.5
 typer==0.4.2
 typing_extensions==4.12.2
+tzdata==2024.1
 urllib3==2.2.2
 websockets==12.0
 Werkzeug==3.0.3
