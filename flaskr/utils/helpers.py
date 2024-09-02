@@ -37,7 +37,6 @@ def separate(in_path, out_path, algorithm):
             "-n", algorithm,  # Use the specified model
             str(in_path),  # Input path
             "-o", temp_output_dir,  # Output to the temporary directory
-            "-j", "4"  # Number of parallel jobs
         ])
     except Exception as e:
         logger.error(f"Error running Demucs: {e}")
