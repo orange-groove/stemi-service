@@ -12,6 +12,10 @@ def create_app():
     # Register the routes blueprint with /api/v1 prefix
     app.register_blueprint(routes_bp, url_prefix='/api/v1')
 
+    @app.route('/healthz', methods=['GET'])
+    def healthz():
+        return 'Ok'
+
     return app
 
 if __name__ == '__main__':
