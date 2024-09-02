@@ -10,15 +10,36 @@ from flaskr.utils.helpers import (
     analyze_audio,
     get_song_info
 )
-from concurrent.futures import ThreadPoolExecutor
-
-executor = ThreadPoolExecutor(max_workers=2)  # Adjust number of workers as needed
+import shutil
 
 app = Flask(__name__)
 
 user_bp = Blueprint('user_bp', __name__)
 UPLOAD_FOLDER = os.path.expanduser('~/tmp_uploads')
 OUTPUT_FOLDER = os.path.expanduser('~/tmp_output')
+
+def process_audio_files(stem_paths, combined_audio_path):
+    """Combine audio files by loading them in chunks to reduce memory usage."""
+    combined_audio_data = None
+    sr = None
+    for stem_path in stem_paths:
+        y, sr = librosa.load(stem_path, sr=None)
+        if combined_audio_data is None:
+            combined_audio_data = y
+        else:
+            combined_audio_data += y
+    if combined_audio_data is not None and sr is not None:
+        combined_audio_data /= len(stem_paths)  # Normalize
+        sf.write(combined_audio_path, combined_audio_data, sr)
+
+def cleanup_temp_files(*paths):
+    """Delete temporary files and directories."""
+    for path in paths:
+        if os.path.exists(path):
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
 
 @user_bp.route('/<user_id>/song', methods=['POST'])
 def upload_song(user_id):
@@ -27,7 +48,6 @@ def upload_song(user_id):
     
     name = request.form.get('name')
     artist = request.form.get('artist')
-    stems = request.form.get('stems')
     algorithm = request.form.get('algorithm', 'htdemucs')
     file = request.files['file']
     
@@ -53,28 +73,14 @@ def upload_song(user_id):
         separate(file_path, output_path, algorithm)
 
         # Paths to the generated stems
-        drum_path = os.path.join(output_path, 'drums.mp3')
         bass_path = os.path.join(output_path, 'bass.mp3')
         other_path = os.path.join(output_path, 'other.mp3')
-        
         combined_audio_path = os.path.join(output_path, "combined_no_vocals.wav")
 
-        combined_audio_data = None
+        # Combine audio files
+        process_audio_files([bass_path, other_path], combined_audio_path)
 
-        # Load and combine the drum, bass, and other stems (excluding vocals)
-        for stem_path in [drum_path, bass_path, other_path]:
-            y, sr = librosa.load(stem_path, sr=None)
-
-            if combined_audio_data is None:
-                combined_audio_data = y
-            else:
-                combined_audio_data += y
-
-        if combined_audio_data is not None:
-            combined_audio_data /= 3  # Normalize the combined signal
-            sf.write(combined_audio_path, combined_audio_data, sr)
-
-        # Analyze the combined audio without vocals
+        # Analyze the combined audio
         analyzed_audio_data = analyze_audio(combined_audio_path)
         key_changes = analyzed_audio_data['key_changes']
         tempo_changes = analyzed_audio_data['tempo_changes']
@@ -83,8 +89,11 @@ def upload_song(user_id):
         song_entry = create_song_entry(name, artist, user_id)
         
         # Upload stems to Supabase and update the database
-        stem_names = ['vocals', 'bass', 'drums', 'other']  # Example stem names
+        stem_names = ['vocals', 'bass', 'drums', 'other']
         updated_song_entry = upload_song_stems_and_update_db(song_entry, output_path, stem_names, key_changes, tempo_changes)
+
+        # Cleanup temporary files
+        cleanup_temp_files(file_path, combined_audio_path)
 
         return jsonify({
             "message": "File uploaded, processed, and saved successfully",
@@ -93,16 +102,12 @@ def upload_song(user_id):
 
 @user_bp.route('/<user_id>/song/info', methods=['GET'])
 def song_info(user_id):
-    # Get 'artist' and 'song' from the query parameters
     artist = request.args.get('artist')
     name = request.args.get('name')
     
     if not artist or not name:
         return jsonify({"error": "Both 'artist' and 'song' query parameters are required."}), 400
 
-    # Get the song information using the utility function
     info = get_song_info(artist, name)
     
-    
-    # Return the information as a JSON response
     return jsonify({"user_id": user_id, "artist": artist, "name": name, "info": info})

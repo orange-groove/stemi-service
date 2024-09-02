@@ -5,6 +5,7 @@ from flaskr.supabase_client import supabase
 import logging
 import librosa
 import numpy as np
+import soundfile as sf
 from openai import OpenAI
 client = OpenAI()
 
@@ -216,3 +217,15 @@ def get_song_info(artist_name, song_name):
     # Extract the content from the response
     song_info = completion.choices[0].message.model_dump_json()
     return song_info
+
+def combine_stems(stem_paths, output_path):
+    combined_audio_data = None
+    for stem_path in stem_paths:
+        y, sr = librosa.load(stem_path, sr=None)
+        if combined_audio_data is None:
+            combined_audio_data = y
+        else:
+            combined_audio_data += y
+    if combined_audio_data is not None:
+        combined_audio_data /= len(stem_paths)  # Normalize by the number of stems
+        sf.write(output_path, combined_audio_data, sr)
