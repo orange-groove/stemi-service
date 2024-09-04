@@ -48,7 +48,7 @@ def upload_song(user_id):
     
     name = request.form.get('name')
     artist = request.form.get('artist')
-    algorithm = request.form.get('algorithm', 'hybrid')
+    algorithm = request.form.get('algorithm', 'htdemucs')
     file = request.files['file']
     
     if not name or not artist:
