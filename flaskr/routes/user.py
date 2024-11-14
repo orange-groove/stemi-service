@@ -1,16 +1,13 @@
-from flask import Flask, Blueprint, request, jsonify
 import os
-import librosa
-import soundfile as sf
+from flask import Flask, Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
 from flaskr.utils.helpers import (
     separate, 
-    create_song_entry, 
+    create_song_entry,
     upload_song_stems_and_update_db, 
-    analyze_audio,
-    get_song_info
+    get_song_info,
+    cleanup_temp_files,
 )
-import shutil
 
 app = Flask(__name__)
 
@@ -18,38 +15,19 @@ user_bp = Blueprint('user_bp', __name__)
 UPLOAD_FOLDER = os.path.expanduser('~/tmp_uploads')
 OUTPUT_FOLDER = os.path.expanduser('~/tmp_output')
 
-def process_audio_files(stem_paths, combined_audio_path):
-    """Combine audio files by loading them in chunks to reduce memory usage."""
-    combined_audio_data = None
-    sr = None
-    for stem_path in stem_paths:
-        y, sr = librosa.load(stem_path, sr=None)
-        if combined_audio_data is None:
-            combined_audio_data = y
-        else:
-            combined_audio_data += y
-    if combined_audio_data is not None and sr is not None:
-        combined_audio_data /= len(stem_paths)  # Normalize
-        sf.write(combined_audio_path, combined_audio_data, sr)
 
-def cleanup_temp_files(*paths):
-    """Delete temporary files and directories."""
-    for path in paths:
-        if os.path.exists(path):
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            else:
-                os.remove(path)
-
-@user_bp.route('/<user_id>/song', methods=['POST'])
-def upload_song(user_id):
+@user_bp.route('/<user_id>/playlist/<playlist_id>/song', methods=['POST'])
+def upload_song(user_id, playlist_id):
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
     
     name = request.form.get('name')
     artist = request.form.get('artist')
-    algorithm = request.form.get('algorithm', 'htdemucs')
+    algorithm = request.form.get('algorithm', 'htdemucs_6s')
     file = request.files['file']
+    
+    if not playlist_id:
+        return jsonify({"error": "Missing playlist id"}), 400
     
     if not name or not artist:
         return jsonify({"error": "Missing name or artist"}), 400
@@ -72,28 +50,20 @@ def upload_song(user_id):
         # Separate the stems
         separate(file_path, output_path, algorithm)
 
-        # Paths to the generated stems
-        bass_path = os.path.join(output_path, 'bass.mp3')
-        other_path = os.path.join(output_path, 'other.mp3')
-        combined_audio_path = os.path.join(output_path, "combined_no_vocals.wav")
-
-        # Combine audio files
-        process_audio_files([bass_path, other_path], combined_audio_path)
-
         # Analyze the combined audio
-        analyzed_audio_data = analyze_audio(combined_audio_path)
-        key_changes = analyzed_audio_data['key_changes']
-        tempo_changes = analyzed_audio_data['tempo_changes']
+        # analyzed_audio_data = analyze_audio(file_path)
+        # key_changes = analyzed_audio_data['key_changes']
+        # tempo_changes = analyzed_audio_data['tempo_changes']
 
         # Create song entry in the database
-        song_entry = create_song_entry(name, artist, user_id)
+        song_entry = create_song_entry(name, artist, user_id, playlist_id)
         
         # Upload stems to Supabase and update the database
-        stem_names = ['vocals', 'bass', 'drums', 'other']
-        updated_song_entry = upload_song_stems_and_update_db(song_entry, output_path, stem_names, key_changes, tempo_changes)
+        stem_names = ['vocals', 'bass', 'drums', 'guitar', 'other']
+        updated_song_entry = upload_song_stems_and_update_db(song_entry, output_path, stem_names)
 
         # Cleanup temporary files
-        cleanup_temp_files(file_path, combined_audio_path)
+        cleanup_temp_files(file_path)
 
         return jsonify({
             "message": "File uploaded, processed, and saved successfully",
@@ -109,5 +79,6 @@ def song_info(user_id):
         return jsonify({"error": "Both 'artist' and 'song' query parameters are required."}), 400
 
     info = get_song_info(artist, name)
+    # popups = get_popup_info(artist, name)
     
-    return jsonify({"user_id": user_id, "artist": artist, "name": name, "info": info})
+    return jsonify({"user_id": user_id, "artist": artist, "name": name, "info": info}), 200

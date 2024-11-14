@@ -7,6 +7,7 @@ import librosa
 import numpy as np
 import soundfile as sf
 from openai import OpenAI
+import json
 
 # Initialize OpenAI client
 client = OpenAI()
@@ -16,6 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
 
 def separate(in_path, out_path, algorithm):
     in_path = os.path.abspath(in_path)  # Ensure absolute path
@@ -56,12 +58,14 @@ def separate(in_path, out_path, algorithm):
     else:
         logger.info(f"Demucs separation completed successfully. Output files: {os.listdir(out_path)}")
 
-def create_song_entry(name, artist, user_id):
+
+def create_song_entry(name, artist, user_id, playlist_id):
     # Create the song entry dictionary
     song_entry = {
         "name": name,
         "artist": artist,
         "user_id": user_id,
+        "playlist_id": playlist_id,
         "tracks": []  # Initially empty, will be populated later
     }
 
@@ -87,22 +91,23 @@ def upload_to_supabase(user_id, song_id, file_path, track_name):
         logger.error("An error occurred while uploading the file to Supabase: %s", e)
         raise
 
-def upload_song_stems_and_update_db(song_entry, output_path, stem_names, key_changes, tempo_changes):
-    user_id = song_entry['user_id']
+
+def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
+    playlist_id = song_entry['playlist_id']
     song_id = song_entry['id']
     tracks = []
 
     try:
         for stem_name in stem_names:
             file_path = os.path.join(output_path, f"{stem_name}.mp3")
-            url = upload_to_supabase(user_id, song_id, file_path, stem_name)
+            url = upload_to_supabase(playlist_id, song_id, file_path, stem_name)
             tracks.append({"name": stem_name, "url": url})
 
         # Update the song entry with the track URLs
         response = supabase.table("song").update({
             "tracks": tracks, 
-            "key_changes": key_changes, 
-            "tempo_changes": tempo_changes
+            # "key_changes": key_changes, 
+            # "tempo_changes": tempo_changes
         }).eq("id", song_id).execute()
 
         return response.data[0]
@@ -110,66 +115,68 @@ def upload_song_stems_and_update_db(song_entry, output_path, stem_names, key_cha
         logger.error(f"Error updating song entry with tracks: {e}")
         raise
 
-def analyze_audio(file_path):
-    try:
-        y, sr = librosa.load(file_path, sr=None)
-        if np.all(y == 0):
-            raise ValueError("Audio file is silent or corrupted.")
 
-        # Determine an appropriate n_fft value based on the signal length
-        # n_fft = min(2048, len(y))  # Use 2048 or the length of the signal, whichever is smaller
+# def analyze_audio(file_path):
+#     try:
+#         y, sr = librosa.load(file_path, sr=None)
+#         if np.all(y == 0):
+#             raise ValueError("Audio file is silent or corrupted.")
 
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-        logger.info(f"Tempo: {tempo}, Beats: {beats}")
+#         # Determine an appropriate n_fft value based on the signal length
+#         # n_fft = min(2048, len(y))  # Use 2048 or the length of the signal, whichever is smaller
 
-        harmonic, _ = librosa.effects.hpss(y)
-        if np.all(harmonic == 0):
-            raise ValueError("Harmonic component is silent.")
+#         tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+#         logger.info(f"Tempo: {tempo}, Beats: {beats}")
 
-        hop_length = min(512, len(y) // 10)
-        # Use the dynamically determined n_fft value
-        chroma = librosa.feature.chroma_cqt(y=harmonic, sr=sr, hop_length=hop_length)
+#         harmonic, _ = librosa.effects.hpss(y)
+#         if np.all(harmonic == 0):
+#             raise ValueError("Harmonic component is silent.")
 
-        def detect_key(chroma_slice):
-            key_index = np.argmax(np.sum(chroma_slice, axis=1))
-            return note_names[key_index % 12]
+#         hop_length = min(512, len(y) // 10)
+#         # Use the dynamically determined n_fft value
+#         chroma = librosa.feature.chroma_cqt(y=harmonic, sr=sr, hop_length=hop_length)
 
-        keys_per_beat = []
-        tempo_changes = []
+#         def detect_key(chroma_slice):
+#             key_index = np.argmax(np.sum(chroma_slice, axis=1))
+#             return note_names[key_index % 12]
 
-        previous_tempo = tempo
-        tempo_changes.append({'beat': 0, 'tempo': float(previous_tempo)})
+#         keys_per_beat = []
+#         tempo_changes = []
 
-        for i in range(len(beats) - 1):
-            start = int(beats[i])
-            end = min(int(beats[i + 1]), len(y))
+#         previous_tempo = tempo
+#         tempo_changes.append({'beat': 0, 'tempo': float(previous_tempo)})
 
-            if end - start > 0:  # Ensure the segment is valid
-                chroma_slice = chroma[:, start:end]
-                key = detect_key(chroma_slice)
-                keys_per_beat.append(key)
+#         for i in range(len(beats) - 1):
+#             start = int(beats[i])
+#             end = min(int(beats[i + 1]), len(y))
 
-                current_tempo, _ = librosa.beat.beat_track(y=y[start:end], sr=sr)
-                if np.abs(current_tempo - previous_tempo) > 1:
-                    tempo_changes.append({'beat': i + 1, 'tempo': float(current_tempo)})
-                    previous_tempo = current_tempo
+#             if end - start > 0:  # Ensure the segment is valid
+#                 chroma_slice = chroma[:, start:end]
+#                 key = detect_key(chroma_slice)
+#                 keys_per_beat.append(key)
 
-        key_changes = []
-        previous_key = None
+#                 current_tempo, _ = librosa.beat.beat_track(y=y[start:end], sr=sr)
+#                 if np.abs(current_tempo - previous_tempo) > 1:
+#                     tempo_changes.append({'beat': i + 1, 'tempo': float(current_tempo)})
+#                     previous_tempo = current_tempo
 
-        for beat, key in enumerate(keys_per_beat):
-            if key != previous_key:
-                key_changes.append({'beat': beat, 'key': key})
-                previous_key = key
+#         key_changes = []
+#         previous_key = None
 
-        if len(tempo_changes) == 1 and tempo_changes[0]['beat'] == 0:
-            tempo_changes.append({'beat': len(beats), 'tempo': float(previous_tempo)})
+#         for beat, key in enumerate(keys_per_beat):
+#             if key != previous_key:
+#                 key_changes.append({'beat': beat, 'key': key})
+#                 previous_key = key
 
-        return {'key_changes': key_changes, 'tempo_changes': tempo_changes}
+#         if len(tempo_changes) == 1 and tempo_changes[0]['beat'] == 0:
+#             tempo_changes.append({'beat': len(beats), 'tempo': float(previous_tempo)})
 
-    except Exception as e:
-        logger.error(f"Error analyzing audio: {e}")
-        raise
+#         return {'key_changes': key_changes, 'tempo_changes': tempo_changes}
+
+#     except Exception as e:
+#         logger.error(f"Error analyzing audio: {e}")
+#         raise
+
 
 def get_song_info(artist_name, song_name):
     messages = [
@@ -181,15 +188,45 @@ def get_song_info(artist_name, song_name):
         completion = client.chat.completions.create(
             model="gpt-4",
             messages=messages,
-            max_tokens=150,
+            max_tokens=1000,
             temperature=0.7
         )
 
-        song_info = completion.choices[0].message.model_dump_json()
+        # Parse the JSON string into a Python dictionary
+        song_info = json.loads(completion.choices[0].message.model_dump_json())
         return song_info
     except Exception as e:
         logger.error(f"Error getting song info from OpenAI: {e}")
         raise
+
+
+def get_popup_info(artist_name, song_name):
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant that provides detailed information about songs and artists in the form of VH1 Pop up video."},
+        {"role": "user", "content": f"Please provide information about the song '{song_name}' by the artist '{artist_name}'. Format the output as a JSON array of 3 strings containing fun facts about the song and artist."}
+    ]
+
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
+            max_tokens=1000,
+            temperature=0.7
+        )
+
+        # Parse the content into a JSON array
+        popups = completion.choices[0].message.model_dump_json()
+        popups_dict = json.loads(popups)
+
+        # Ensure that the 'content' field is parsed as an array
+        if 'content' in popups_dict:
+            popups_dict['content'] = json.loads(popups_dict['content'])
+
+        return popups_dict
+    except Exception as e:
+        logger.error(f"Error getting pop-up info from OpenAI: {e}")
+        raise
+
 
 def combine_stems(stem_paths, output_path):
     combined_audio_data = None
@@ -207,3 +244,28 @@ def combine_stems(stem_paths, output_path):
     else:
         logger.error("No audio data to combine.")
         raise ValueError("No audio data to combine.")
+
+
+def process_audio_files(stem_paths, combined_audio_path):
+    """Combine audio files by loading them in chunks to reduce memory usage."""
+    combined_audio_data = None
+    sr = None
+    for stem_path in stem_paths:
+        y, sr = librosa.load(stem_path, sr=None)
+        if combined_audio_data is None:
+            combined_audio_data = y
+        else:
+            combined_audio_data += y
+    if combined_audio_data is not None and sr is not None:
+        combined_audio_data /= len(stem_paths)  # Normalize
+        sf.write(combined_audio_path, combined_audio_data, sr)
+
+
+def cleanup_temp_files(*paths):
+    """Delete temporary files and directories."""
+    for path in paths:
+        if os.path.exists(path):
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
