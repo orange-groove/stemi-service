@@ -7,6 +7,7 @@ from flaskr.utils.helpers import (
     upload_song_stems_and_update_db, 
     get_song_info,
     cleanup_temp_files,
+    recognize_song,
 )
 
 app = Flask(__name__)
@@ -21,53 +22,53 @@ def upload_song(user_id, playlist_id):
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
     
-    name = request.form.get('name')
-    artist = request.form.get('artist')
     algorithm = request.form.get('algorithm', 'htdemucs_6s')
     file = request.files['file']
     
     if not playlist_id:
         return jsonify({"error": "Missing playlist id"}), 400
     
-    if not name or not artist:
-        return jsonify({"error": "Missing name or artist"}), 400
-    
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
     
     if file:
-        filename = secure_filename(file.filename)
-        song_name = os.path.splitext(filename)[0]
-        user_folder = os.path.join(UPLOAD_FOLDER, user_id)
-        os.makedirs(user_folder, exist_ok=True)
+        # Create song entry immediately to get the song id
+        song_entry = create_song_entry(user_id=user_id, playlist_id=playlist_id)
 
-        file_path = os.path.join(user_folder, filename)
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+ 
+        file_path = os.path.join(UPLOAD_FOLDER, str(song_entry.get('id')) + '.mp3')
         file.save(file_path)
 
-        output_path = os.path.join(OUTPUT_FOLDER, user_id, song_name)
+        output_path = os.path.join(OUTPUT_FOLDER, str(song_entry.get('id')))
         os.makedirs(output_path, exist_ok=True)
+
+        # Recognize the song
+        recognized_song = recognize_song(file_path)
+
+        artist = recognized_song.get('result').get('artist')
+        title = recognized_song.get('result').get('title')
+
+        song_entry['artist'] = artist
+        song_entry['title'] = title
+        song_entry['album'] = recognized_song.get('result').get('album')
+        song_entry['release_date'] = recognized_song.get('result').get('release_date')
+        song_entry['image_url'] = recognized_song.get('result').get('spotify').get('album').get('images')[1].get('url')
 
         # Separate the stems
         separate(file_path, output_path, algorithm)
-
-        # Analyze the combined audio
-        # analyzed_audio_data = analyze_audio(file_path)
-        # key_changes = analyzed_audio_data['key_changes']
-        # tempo_changes = analyzed_audio_data['tempo_changes']
-
-        # Create song entry in the database
-        song_entry = create_song_entry(name, artist, user_id, playlist_id)
         
         # Upload stems to Supabase and update the database
         stem_names = ['vocals', 'bass', 'drums', 'guitar', 'other']
-        updated_song_entry = upload_song_stems_and_update_db(song_entry, output_path, stem_names)
+        upload_song_stems_and_update_db(song_entry, output_path, stem_names)
 
         # Cleanup temporary files
         cleanup_temp_files(file_path)
+        cleanup_temp_files(output_path)
 
         return jsonify({
             "message": "File uploaded, processed, and saved successfully",
-            "song_entry": updated_song_entry,
         }), 200
 
 @user_bp.route('/<user_id>/song/info', methods=['GET'])

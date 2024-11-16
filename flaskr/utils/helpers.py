@@ -8,6 +8,8 @@ import numpy as np
 import soundfile as sf
 from openai import OpenAI
 import json
+from flaskr.config import Config
+import requests
 
 # Initialize OpenAI client
 client = OpenAI()
@@ -59,13 +61,15 @@ def separate(in_path, out_path, algorithm):
         logger.info(f"Demucs separation completed successfully. Output files: {os.listdir(out_path)}")
 
 
-def create_song_entry(name, artist, user_id, playlist_id):
+def create_song_entry(title=None, artist=None, user_id=None, playlist_id=None, image_url=None, release_date=None):
     # Create the song entry dictionary
     song_entry = {
-        "name": name,
+        "title": title,
         "artist": artist,
         "user_id": user_id,
         "playlist_id": playlist_id,
+        "image_url": image_url,
+        "release_date": release_date,
         "tracks": []  # Initially empty, will be populated later
     }
 
@@ -77,9 +81,9 @@ def create_song_entry(name, artist, user_id, playlist_id):
         logger.error("An error occurred while creating the song entry: %s", e)
         raise
 
-def upload_to_supabase(user_id, song_id, file_path, track_name):
+def upload_to_supabase(playlist_id, song_id, file_path, track_name):
     bucket_name = "yoke-stems"
-    destination_path = f"{user_id}/{song_id}/{track_name}.mp3"
+    destination_path = f"{playlist_id}/{song_id}/{track_name}.mp3"
 
     try:
         with open(file_path, "rb") as file:
@@ -106,13 +110,38 @@ def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
         # Update the song entry with the track URLs
         response = supabase.table("song").update({
             "tracks": tracks, 
-            # "key_changes": key_changes, 
-            # "tempo_changes": tempo_changes
+            "title": song_entry['title'],
+            "artist": song_entry['artist'],
+            "image_url": song_entry['image_url'],
         }).eq("id", song_id).execute()
 
         return response.data[0]
     except Exception as e:
         logger.error(f"Error updating song entry with tracks: {e}")
+        raise
+
+def recognize_song(file_path):
+    try:
+        with open(file_path, "rb") as f:
+            response = requests.post(
+                "https://api.audd.io/",
+                data={
+                    "api_token": Config.AUDD_API_KEY,
+                    "return": "spotify"
+                },
+                files={
+                    "file": f
+                }
+            )
+
+        if response.status_code == 200:
+            data = response.json()
+            return data
+        else:
+            logger.error(f"Error recognizing song: {response.text}")
+            raise ValueError("Error recognizing song.")
+    except Exception as e:
+        logger.error(f"Error recognizing song: {e}")
         raise
 
 
