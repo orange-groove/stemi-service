@@ -4,7 +4,6 @@ import demucs.separate
 from flaskr.supabase_client import supabase
 import logging
 import librosa
-import numpy as np
 import soundfile as sf
 from openai import OpenAI
 import json
@@ -81,7 +80,7 @@ def create_song_entry(title=None, artist=None, user_id=None, playlist_id=None, i
         logger.error("An error occurred while creating the song entry: %s", e)
         raise
 
-def upload_to_supabase(playlist_id, song_id, file_path, track_name):
+def upload_song_to_storage(playlist_id, song_id, file_path, track_name):
     bucket_name = "yoke-stems"
     destination_path = f"{playlist_id}/{song_id}/{track_name}.mp3"
 
@@ -96,29 +95,7 @@ def upload_to_supabase(playlist_id, song_id, file_path, track_name):
         raise
 
 
-def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
-    playlist_id = song_entry['playlist_id']
-    song_id = song_entry['id']
-    tracks = []
 
-    try:
-        for stem_name in stem_names:
-            file_path = os.path.join(output_path, f"{stem_name}.mp3")
-            url = upload_to_supabase(playlist_id, song_id, file_path, stem_name)
-            tracks.append({"name": stem_name, "url": url})
-
-        # Update the song entry with the track URLs
-        response = supabase.table("song").update({
-            "tracks": tracks, 
-            "title": song_entry['title'],
-            "artist": song_entry['artist'],
-            "image_url": song_entry['image_url'],
-        }).eq("id", song_id).execute()
-
-        return response.data[0]
-    except Exception as e:
-        logger.error(f"Error updating song entry with tracks: {e}")
-        raise
 
 def recognize_song(file_path):
     try:
