@@ -35,7 +35,7 @@ def get_playlists(user_id):
             raise ValueError("User ID is required.")
 
         # Use Supabase query to fetch playlists with nested songs
-        response = supabase.table('playlists').select("*").eq('user_id', user_id).execute()
+        response = supabase.table('playlists').select("*, songs(id, title, image_url)").eq('user_id', user_id).execute()
 
         if response.data is None:
             raise RuntimeError("Failed to fetch playlists: No data returned.")
