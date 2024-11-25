@@ -174,7 +174,7 @@ def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
 
     try:
         for stem_name in stem_names:
-            file_path = os.path.join(output_path, f"{stem_name}.mp3")
+            file_path = os.path.join(output_path, f"{stem_name}.ogg")
             url = upload_song_to_storage(playlist_id, song_id, file_path, stem_name)
             tracks.append({"name": stem_name, "url": url})
 

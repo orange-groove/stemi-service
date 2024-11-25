@@ -9,6 +9,7 @@ from openai import OpenAI
 import json
 from flaskr.config import Config
 import requests
+import subprocess
 
 # Initialize OpenAI client
 client = OpenAI()
@@ -19,6 +20,24 @@ logger = logging.getLogger(__name__)
 
 note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
+logger = logging.getLogger(__name__)
+
+def convert_to_ogg(input_path, output_path):
+    """
+    Converts a WAV file to OGG format using FFmpeg.
+    """
+    try:
+        subprocess.run([
+            "ffmpeg",
+            "-i", input_path,
+            "-c:a", "libopus",  # Use Opus encoder
+            "-b:a", "96k",      # Set bitrate (adjust for quality vs. size)
+            output_path
+        ], check=True)
+        logger.info(f"Converted {input_path} to {output_path}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error converting to OGG: {e}")
+        raise
 
 def separate(in_path, out_path, algorithm):
     in_path = os.path.abspath(in_path)  # Ensure absolute path
@@ -27,7 +46,7 @@ def separate(in_path, out_path, algorithm):
     # Ensure the output directory exists
     os.makedirs(out_path, exist_ok=True)
 
-    # Temporary directory for Demucs output
+    # Temporary directory for Demucs WAV output
     temp_output_dir = os.path.join(out_path, algorithm)
     os.makedirs(temp_output_dir, exist_ok=True)
 
@@ -35,20 +54,22 @@ def separate(in_path, out_path, algorithm):
     logger.info(f"Running Demucs separation on {in_path} with temporary output directory {temp_output_dir}")
     try:
         demucs.separate.main([
-            "--mp3",  # Save output as MP3
             "--two-stems", None,  # Separate into vocals and no_vocals
-            "-n", algorithm,  # Use the specified model
-            str(in_path),  # Input path
+            "-n", algorithm,      # Use the specified model
+            str(in_path),         # Input path
             "-o", temp_output_dir,  # Output to the temporary directory
         ])
     except Exception as e:
         logger.error(f"Error running Demucs: {e}")
         raise
 
-    # Move the separated files to the final output directory
+    # Convert WAV files to OGG and move to final output directory
     for root, _, files in os.walk(temp_output_dir):
         for file in files:
-            shutil.move(os.path.join(root, file), os.path.join(out_path, file))
+            if file.endswith(".wav"):
+                input_wav = os.path.join(root, file)
+                output_ogg = os.path.join(out_path, os.path.splitext(file)[0] + ".ogg")
+                convert_to_ogg(input_wav, output_ogg)
 
     # Clean up the temporary directory
     shutil.rmtree(temp_output_dir)
@@ -58,6 +79,7 @@ def separate(in_path, out_path, algorithm):
         raise RuntimeError(f"Demucs did not generate any files in {out_path}.")
     else:
         logger.info(f"Demucs separation completed successfully. Output files: {os.listdir(out_path)}")
+
 
 
 def create_song_entry(title=None, artist=None, user_id=None, playlist_id=None, image_url=None, release_date=None):
@@ -82,7 +104,7 @@ def create_song_entry(title=None, artist=None, user_id=None, playlist_id=None, i
 
 def upload_song_to_storage(playlist_id, song_id, file_path, track_name):
     bucket_name = "yoke-stems"
-    destination_path = f"{playlist_id}/{song_id}/{track_name}.mp3"
+    destination_path = f"{playlist_id}/{song_id}/{track_name}.ogg"
 
     try:
         with open(file_path, "rb") as file:
@@ -93,8 +115,6 @@ def upload_song_to_storage(playlist_id, song_id, file_path, track_name):
     except Exception as e:
         logger.error("An error occurred while uploading the file to Supabase: %s", e)
         raise
-
-
 
 
 def recognize_song(file_path):
