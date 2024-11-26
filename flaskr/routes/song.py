@@ -1,7 +1,8 @@
-import os
-from flask import Flask, Blueprint, request, jsonify
+from flask import Flask, Blueprint, request, jsonify, send_file
 from flaskr.utils.helpers import (
     get_song_info,
+    download_stems_zip,
+    mix_and_zip_stems
 )
 
 from flaskr.database_functions.song import (
@@ -94,3 +95,68 @@ def song_info(user_id):
     # popups = get_popup_info(artist, name)
     
     return jsonify({"user_id": user_id, "artist": artist, "name": name, "info": info}), 200
+
+
+@song_bp.route('/song/<song_id>/download_stems', methods=['POST'])
+@authorize
+def download_stems(song_id):
+    """
+    POST endpoint to generate and download a ZIP file of stems.
+    Expects JSON body with 'stems' and 'file_type' parameters.
+    """
+    try:
+        # Parse JSON request body
+        data = request.get_json()
+        stems = data.get('stems', [])
+        file_type = data.get('file_type')
+
+        if not stems or not file_type or not song_id:
+            return jsonify({"error": "Missing required parameters"}), 400
+
+        # Generate ZIP file
+        zip_file_path = download_stems_zip(stems, file_type, song_id)
+
+
+        # Return ZIP file as a response
+        return send_file(
+            zip_file_path,
+            as_attachment=True,
+            download_name=f"Song_{song_id}_stems.zip",
+            mimetype='application/zip'
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@song_bp.route('/song/<song_id>/download_mixdown', methods=['POST'])
+@authorize
+def mixdown_song(song_id):
+    """
+    POST endpoint to mix selected stems into a single audio file and return a ZIP.
+
+    Expects JSON body with 'stems' and optional 'file_type' parameters.
+    """
+    try:
+        # Parse JSON request body
+        data = request.get_json()
+        stems = data.get('stems', [])
+        file_type = data.get('file_type', 'mp3')
+
+        if not stems or not song_id:
+            return jsonify({"error": "Missing required parameters"}), 400
+
+        # Mix and create ZIP
+        zip_file_path = mix_and_zip_stems(stems, song_id, file_type)
+
+        # Return ZIP file as a response
+        return send_file(
+            zip_file_path,
+            as_attachment=True,
+            download_name=f"Song_{song_id}_mixdown.zip",
+            mimetype='application/zip'
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+

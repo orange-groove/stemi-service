@@ -10,6 +10,9 @@ import json
 from flaskr.config import Config
 import requests
 import subprocess
+import tempfile
+import zipfile
+from pydub import AudioSegment
 
 # Initialize OpenAI client
 client = OpenAI()
@@ -22,24 +25,15 @@ note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 logger = logging.getLogger(__name__)
 
-def convert_to_ogg(input_path, output_path):
-    """
-    Converts a WAV file to OGG format using FFmpeg.
-    """
-    try:
-        subprocess.run([
-            "ffmpeg",
-            "-i", input_path,
-            "-c:a", "libopus",  # Use Opus encoder
-            "-b:a", "96k",      # Set bitrate (adjust for quality vs. size)
-            output_path
-        ], check=True)
-        logger.info(f"Converted {input_path} to {output_path}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error converting to OGG: {e}")
-        raise
-
 def separate(in_path, out_path, algorithm):
+    """
+    Separates stems using Demucs and stores WAV files in the specified output directory.
+
+    Parameters:
+    - in_path: Path to the input audio file.
+    - out_path: Path to the directory where output stems will be stored.
+    - algorithm: The Demucs algorithm/model to use.
+    """
     in_path = os.path.abspath(in_path)  # Ensure absolute path
     out_path = os.path.abspath(out_path)  # Ensure absolute path
 
@@ -63,13 +57,13 @@ def separate(in_path, out_path, algorithm):
         logger.error(f"Error running Demucs: {e}")
         raise
 
-    # Convert WAV files to OGG and move to final output directory
+    # Move WAV files to the final output directory
     for root, _, files in os.walk(temp_output_dir):
         for file in files:
             if file.endswith(".wav"):
                 input_wav = os.path.join(root, file)
-                output_ogg = os.path.join(out_path, os.path.splitext(file)[0] + ".ogg")
-                convert_to_ogg(input_wav, output_ogg)
+                output_wav = os.path.join(out_path, file)  # Keep the original WAV file name
+                shutil.move(input_wav, output_wav)
 
     # Clean up the temporary directory
     shutil.rmtree(temp_output_dir)
@@ -79,7 +73,6 @@ def separate(in_path, out_path, algorithm):
         raise RuntimeError(f"Demucs did not generate any files in {out_path}.")
     else:
         logger.info(f"Demucs separation completed successfully. Output files: {os.listdir(out_path)}")
-
 
 
 def create_song_entry(title=None, artist=None, user_id=None, playlist_id=None, image_url=None, release_date=None):
@@ -102,9 +95,9 @@ def create_song_entry(title=None, artist=None, user_id=None, playlist_id=None, i
         logger.error("An error occurred while creating the song entry: %s", e)
         raise
 
-def upload_song_to_storage(playlist_id, song_id, file_path, track_name):
+def upload_song_to_storage(song_id, file_path, track_name):
     bucket_name = "yoke-stems"
-    destination_path = f"{playlist_id}/{song_id}/{track_name}.ogg"
+    destination_path = f"{song_id}/{track_name}.wav"
 
     try:
         with open(file_path, "rb") as file:
@@ -295,3 +288,144 @@ def cleanup_temp_files(*paths):
                 shutil.rmtree(path)
             else:
                 os.remove(path)
+
+
+def convert_audio(input_file, output_file, file_type):
+    """
+    Converts an audio file to the specified format using pydub.
+
+    Parameters:
+    - input_file (str): Path to the input audio file.
+    - output_file (str): Path to the output audio file.
+    - file_type (str): Target file type ('wav', 'mp3', 'ogg').
+    """
+    try:
+        # Load the input audio file
+        audio = AudioSegment.from_file(input_file)
+
+        # Export the file in the desired format
+        if file_type == "ogg":
+            audio.export(output_file, format="ogg", codec="libopus", parameters=["-b:a", "128k"])
+        else:
+            audio.export(output_file, format=file_type)
+        
+        print(f"Converted {input_file} to {output_file} as {file_type}")
+    except Exception as e:
+        print(f"Error converting {input_file} to {file_type}: {e}")
+        raise
+
+def download_stems_zip(stem_names, file_type, song_id):
+    """
+    Downloads a ZIP of selected stems in a single specified format from Supabase storage.
+
+    Parameters:
+    - stem_names (list): List of stem names to include (e.g., ['vocals', 'guitar']).
+    - file_type (str): Target file type for the download ('wav', 'mp3', or 'ogg').
+    - playlist_id (str): Playlist ID to locate stems.
+    - song_id (str): Song ID to locate stems.
+    - supabase_url (str): Supabase project URL.
+    - supabase_key (str): Supabase API key.
+
+    Returns:
+    - path to the ZIP file.
+    """
+
+    # Temp directory for downloaded files
+    temp_dir = tempfile.mkdtemp()
+    zip_file_path = os.path.join(temp_dir, f"{song_id}_stems.zip")
+
+    # Create a ZIP file
+    with zipfile.ZipFile(zip_file_path, "w") as zipf:
+        for stem in stem_names:
+            file_name = f"{stem}.wav"  # Assume original files are WAV
+            supabase_path = f"{song_id}/{file_name}"
+
+            # Download the file from Supabase
+            try:
+                response = supabase.storage.from_("yoke-stems").download(supabase_path)
+                if response:
+                    # Save the downloaded WAV file
+                    wav_path = os.path.join(temp_dir, file_name)
+                    with open(wav_path, "wb") as f:
+                        f.write(response)
+
+                    # Convert to the desired format
+                    output_file_name = f"{stem}.{file_type}"
+                    output_file_path = os.path.join(temp_dir, output_file_name)
+                    convert_audio(wav_path, output_file_path, file_type)
+
+                    # Add to ZIP
+                    zipf.write(output_file_path, arcname=output_file_name)
+
+                    # Clean up individual files
+                    os.remove(wav_path)
+                    os.remove(output_file_path)
+            except Exception as e:
+                print(f"Could not process {supabase_path}: {e}")
+
+    # Return path to the ZIP file
+    return zip_file_path
+
+
+def mix_and_zip_stems(stem_names, song_id, output_format="mp3"):
+    """
+    Mixes the provided stems into a single audio file and returns a ZIP file path.
+
+    Parameters:
+    - stem_names (list): List of stem names to mix (e.g., ['vocals', 'guitar']).
+    - song_id (str): Song ID to locate stems in the bucket.
+    - output_format (str): The format of the mixed-down audio file ('mp3', 'wav', etc.).
+
+    Returns:
+    - str: Path to the ZIP file containing the mixed-down audio.
+    """
+
+    # Temporary directory for processing
+    temp_dir = tempfile.mkdtemp()
+    mixed_file_name = f"{song_id}_mixdown.{output_format}"
+    mixed_file_path = os.path.join(temp_dir, mixed_file_name)
+
+    try:
+        # Load and mix stems
+        mixed_audio = None
+        for stem in stem_names:
+            file_name = f"{stem}.wav"  # Assume original files are WAV
+            supabase_path = f"{song_id}/{file_name}"
+
+            # Download the stem
+            response = supabase.storage.from_("yoke-stems").download(supabase_path)
+            if response:
+                # Save the stem locally
+                stem_path = os.path.join(temp_dir, file_name)
+                with open(stem_path, "wb") as f:
+                    f.write(response)
+
+                # Load the stem audio
+                stem_audio = AudioSegment.from_file(stem_path)
+
+                # Mix with the existing audio
+                if mixed_audio is None:
+                    mixed_audio = stem_audio
+                else:
+                    mixed_audio = mixed_audio.overlay(stem_audio)
+
+        # Export the mixed-down audio
+        if mixed_audio is not None:
+            mixed_audio.export(mixed_file_path, format=output_format)
+        else:
+            raise ValueError("No stems found to mix.")
+
+        # Create a ZIP file containing the mixdown
+        zip_file_path = os.path.join(temp_dir, f"{song_id}_mixdown.zip")
+        with zipfile.ZipFile(zip_file_path, "w") as zipf:
+            zipf.write(mixed_file_path, arcname=mixed_file_name)
+
+        return zip_file_path
+
+    except Exception as e:
+        print(f"Error mixing stems: {e}")
+        raise
+    finally:
+        # Cleanup temporary files except the ZIP
+        if os.path.exists(mixed_file_path):
+            os.remove(mixed_file_path)

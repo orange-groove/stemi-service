@@ -168,14 +168,13 @@ def update_song(song_id, song):
 
 
 def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
-    playlist_id = song_entry['playlist_id']
     song_id = song_entry['id']
     tracks = []
 
     try:
         for stem_name in stem_names:
-            file_path = os.path.join(output_path, f"{stem_name}.ogg")
-            url = upload_song_to_storage(playlist_id, song_id, file_path, stem_name)
+            file_path = os.path.join(output_path, f"{stem_name}.wav")
+            url = upload_song_to_storage(song_id, file_path, stem_name)
             tracks.append({"name": stem_name, "url": url})
 
         # Update the song entry with the track URLs
