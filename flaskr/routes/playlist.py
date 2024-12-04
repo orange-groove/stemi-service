@@ -1,11 +1,6 @@
-import os
-from flask import Flask, Blueprint, request, jsonify
-from flaskr.utils.helpers import (
-    separate, 
-    cleanup_temp_files,
-    recognize_song,
+from psycopg2.errors import UniqueViolation
 
-)
+from flask import Flask, Blueprint, request, jsonify
 
 from flaskr.database_functions.playlist import (
     create_playlist,
@@ -13,23 +8,16 @@ from flaskr.database_functions.playlist import (
     update_playlist,
     delete_playlist,
     get_playlist_songs,
-    get_playlist
+    get_playlist,
+    add_song_to_playlist,
+    remove_song_from_playlist
 )
-
-from flaskr.database_functions.song import (
-    create_song,
-    upload_song_stems_and_update_db
-)
-
 
 from flaskr.decorators.auth import authorize
 
 app = Flask(__name__)
 
 playlist_bp = Blueprint('playlist_bp', __name__)
-UPLOAD_FOLDER = os.path.expanduser('~/tmp_uploads')
-OUTPUT_FOLDER = os.path.expanduser('~/tmp_output')
-
 
 @playlist_bp.route('/playlist', methods=['POST'])
 @authorize
@@ -123,57 +111,49 @@ def delete_playlist_route(playlist_id):
     }), 200
 
 
-@playlist_bp.route('/playlist/<playlist_id>/song', methods=['POST'])
+@playlist_bp.route('/playlist/<playlist_id>/song/<song_id>', methods=['POST'])
 @authorize
-def upload_song(playlist_id):
-    user_id = getattr(request, 'user_id', None)
+def add_song_to_playlist_route(playlist_id, song_id):
+    """
+    POST endpoint to add song to playlist.
+    """
+    try:
 
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-    
-    algorithm = request.form.get('algorithm', 'htdemucs_6s')
-    file = request.files['file']
-    
-    if not playlist_id:
-        return jsonify({"error": "Missing playlist id"}), 400
-    
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    
-    if file:
-        # Create song entry immediately to get the song id
-        song_entry = create_song({'playlist_id': playlist_id, 'user_id': user_id})
+        if not playlist_id or not song_id:
+            return jsonify({"error": "Missing required parameters"}), 400
 
-        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
- 
-        file_path = os.path.join(UPLOAD_FOLDER, str(song_entry.get('id')) + '.mp3')
-        file.save(file_path)
-
-        output_path = os.path.join(OUTPUT_FOLDER, str(song_entry.get('id')))
-        os.makedirs(output_path, exist_ok=True)
-
-        # Recognize the song
-        recognized_song = recognize_song(file_path).get('result')
-
-        if recognized_song:
-            song_entry['artist'] = recognized_song.get('artist')
-            song_entry['title'] = recognized_song.get('title')
-            song_entry['album'] = recognized_song.get('album')
-            song_entry['release_date'] = recognized_song.get('release_date')
-            song_entry['image_url'] = recognized_song.get('spotify').get('album').get('images')[1].get('url')
-
-        # Separate the stems
-        separate(file_path, output_path, algorithm)
-        
-        # Upload stems to Supabase and update the database
-        stem_names = ['vocals', 'bass', 'drums', 'guitar', 'other']
-        upload_song_stems_and_update_db(song_entry, output_path, stem_names)
-
-        # Cleanup temporary files
-        cleanup_temp_files(file_path)
-        cleanup_temp_files(output_path)
+        # Add song to playlist
+        updated_song = add_song_to_playlist(song_id, playlist_id)
 
         return jsonify({
-            "message": "File uploaded, processed, and saved successfully",
+            "song": updated_song,
+            "message": "Song added to playlist successfully",
         }), 200
+    
+    except Exception as e:
+        if (e.code == '23505'):
+            return jsonify({"error": "Song already added to playlist"}), 409
+        return jsonify({"error": str(e)}), 500
+    
+@playlist_bp.route('/playlist/<playlist_id>/song/<song_id>', methods=['DELETE'])
+@authorize
+def remove_song_from_playlist_route(playlist_id, song_id):
+    """
+    DELETE endpoint to remove song from playlist.
+    """
+    try:
+
+        if not playlist_id or not song_id:
+            return jsonify({"error": "Missing required parameters"}), 400
+
+        # Remove song from playlist
+        removed_song = remove_song_from_playlist(song_id, playlist_id)
+
+        return jsonify({
+            "song": removed_song,
+            "message": "Song removed from playlist successfully",
+        }), 200
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+

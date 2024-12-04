@@ -1,8 +1,14 @@
+import os
+
 from flask import Flask, Blueprint, request, jsonify, send_file
 from flaskr.utils.helpers import (
     get_song_info,
     download_stems_zip,
-    mix_and_zip_stems
+    mix_and_zip_stems,
+    separate, 
+    cleanup_temp_files,
+    recognize_song,
+    analyze_song,
 )
 
 from flaskr.database_functions.song import (
@@ -10,6 +16,8 @@ from flaskr.database_functions.song import (
     get_user_songs,
     delete_song,
     update_song,
+    create_song,
+    upload_song_stems_and_update_db,
 )
 
 from flaskr.decorators.auth import authorize
@@ -17,6 +25,68 @@ from flaskr.decorators.auth import authorize
 app = Flask(__name__)
 
 song_bp = Blueprint('song_bp', __name__)
+
+UPLOAD_FOLDER = os.path.expanduser('~/tmp_uploads')
+OUTPUT_FOLDER = os.path.expanduser('~/tmp_output')
+
+@song_bp.route('/song', methods=['POST'])
+@authorize
+def upload_song():
+    user_id = getattr(request, 'user_id', None)
+
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    
+    algorithm = request.form.get('algorithm', 'htdemucs_6s')
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    
+    if file:
+        # Create song entry immediately to get the song id
+        song_entry = create_song({'user_id': user_id})
+
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+ 
+        file_path = os.path.join(UPLOAD_FOLDER, str(song_entry.get('id')) + '.mp3')
+        file.save(file_path)
+
+        output_path = os.path.join(OUTPUT_FOLDER, str(song_entry.get('id')))
+        os.makedirs(output_path, exist_ok=True)
+
+        # Recognize the song
+        recognized_song = recognize_song(file_path).get('result')
+
+        if recognized_song:
+            song_entry['artist'] = recognized_song.get('artist')
+            song_entry['title'] = recognized_song.get('title')
+            song_entry['album'] = recognized_song.get('album')
+            song_entry['release_date'] = recognized_song.get('release_date')
+            song_entry['image_url'] = recognized_song.get('spotify').get('album').get('images')[1].get('url')
+
+        # Separate the stems
+        separate(file_path, output_path, algorithm)
+
+        # Analyze the song for tempo and key
+        analyzed_song = analyze_song(file_path)
+
+        if analyzed_song:
+            song_entry['tempo_changes'] = analyzed_song.get('tempo_changes')
+            song_entry['song_key'] = analyzed_song.get('song_key')
+        
+        # Upload stems to Supabase and update the database
+        stem_names = ['vocals', 'bass', 'drums', 'guitar', 'other']
+        upload_song_stems_and_update_db(song_entry, output_path, stem_names)
+
+        # Cleanup temporary files
+        cleanup_temp_files(file_path)
+        cleanup_temp_files(output_path)
+
+        return jsonify({
+            "message": "File uploaded, processed, and saved successfully",
+        }), 200
 
 @song_bp.route('/song', methods=['GET'])
 @authorize
@@ -43,7 +113,8 @@ def get_song_route(song_id):
 @song_bp.route('/song/<song_id>', methods=['DELETE'])
 @authorize
 def delete_song_route(song_id):
-    song = delete_song(song_id)
+    user_id = getattr(request, 'user_id', None)
+    song = delete_song(user_id, song_id)
 
     return jsonify({
         "song": song,
@@ -159,4 +230,5 @@ def mixdown_song(song_id):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 

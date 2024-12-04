@@ -71,7 +71,7 @@ def update_song(song_id, song):
     return song.data[0]
 
 
-def delete_song(song_id):
+def delete_song(user_id, song_id):
     """
     Delete a song and its associated folder from Supabase.
 
@@ -87,15 +87,11 @@ def delete_song(song_id):
         if not song_response.data:
             raise ValueError(f"Song with ID {song_id} not found.")
         
-        song = song_response.data[0]
-        playlist_id = song.get('playlist_id')
         bucket_name = "yoke-stems"
 
-        if not playlist_id:
-            raise ValueError(f"Playlist ID not found for song {song_id}.")
 
         # Construct the folder path
-        folder_path = f"{playlist_id}/{song_id}/"
+        folder_path = f"{user_id}/{song_id}/"
         print(f"Deleting folder from bucket: {folder_path}")  # Debug log
 
         # List all files in the folder
@@ -120,6 +116,12 @@ def delete_song(song_id):
                 raise ValueError(f"Failed to delete some files in folder: {folder_path}")
 
         # Supabase automatically removes folders when they're empty
+
+        # Delete playlists_songs records associated with the song
+        delete_playlist_songs_response = supabase.table('playlists_songs').delete().eq('song_id', song_id).execute()
+        
+        if delete_playlist_songs_response is None:
+            raise ValueError(f"Failed to delete playlist_songs records for song ID {song_id}.")
 
         # Delete the song record from the database
         delete_response = supabase.table('songs').delete().eq('id', song_id).execute()
@@ -169,12 +171,13 @@ def update_song(song_id, song):
 
 def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
     song_id = song_entry['id']
+    user_id = song_entry['user_id']
     tracks = []
 
     try:
         for stem_name in stem_names:
             file_path = os.path.join(output_path, f"{stem_name}.wav")
-            url = upload_song_to_storage(song_id, file_path, stem_name)
+            url = upload_song_to_storage(user_id, song_id, file_path, stem_name)
             tracks.append({"name": stem_name, "url": url})
 
         # Update the song entry with the track URLs
@@ -183,6 +186,8 @@ def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
             "title": song_entry['title'],
             "artist": song_entry['artist'],
             "image_url": song_entry['image_url'],
+            "tempo_changes": song_entry['tempo_changes'],
+            "song_key": song_entry['song_key'],
         }).eq("id", song_id).execute()
 
         return response.data[0]
@@ -190,3 +195,4 @@ def upload_song_stems_and_update_db(song_entry, output_path, stem_names):
     except Exception as e:
         print(f"Error uploading song stems: {e}")
         return {"error": str(e)}
+

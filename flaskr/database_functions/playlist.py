@@ -35,7 +35,7 @@ def get_playlists(user_id):
             raise ValueError("User ID is required.")
 
         # Use Supabase query to fetch playlists with nested songs
-        response = supabase.table('playlists').select("*, songs(id, title, image_url)").eq('user_id', user_id).execute()
+        response = supabase.table('playlists').select("*").eq('user_id', user_id).execute()
 
         if response.data is None:
             raise RuntimeError("Failed to fetch playlists: No data returned.")
@@ -61,7 +61,7 @@ def get_playlist(playlist_id):
         if not playlist_id or not isinstance(playlist_id, str):
             raise ValueError("Valid playlist ID is required.")
 
-        response = supabase.table('playlists').select("*, songs(id, title, artist, image_url, playlist_id, created_at)").eq('id', playlist_id).execute()
+        response = supabase.table('playlists').select("*").eq('id', playlist_id).execute()
 
         if response.data is None:
             raise RuntimeError("Failed to fetch playlist: No data returned.")
@@ -170,7 +170,7 @@ def delete_playlist(playlist_id):
 
 
 def get_playlist_songs(playlist_id):
-    """Fetch all songs for a playlist.
+    """Fetch all songs in a playlist.
 
     Args:
         playlist_id (str): The ID of the playlist.
@@ -178,18 +178,42 @@ def get_playlist_songs(playlist_id):
     Returns:
         list: A list of songs in the playlist.
     """
-    try:
-        if not playlist_id or not isinstance(playlist_id, str):
-            raise ValueError("Valid playlist ID is required.")
+    
 
-        response = supabase.table('songs').select('*').eq('playlist_id', playlist_id).execute()
+    response = supabase.table('playlists_songs').select('songs (*)').eq('playlist_id', playlist_id).execute()
 
-        if response.data is None:
-            raise RuntimeError("Failed to fetch songs: No data returned.")
+    return response.data
 
-        if not response.data:
-            return []  # Return an empty list if no songs are found.
 
-        return response.data
-    except Exception as e:
-        raise RuntimeError(f"Error fetching songs for playlist with ID {playlist_id}: {e}")
+def add_song_to_playlist(song_id, playlist_id):
+    """Add a song to a playlist.
+
+    Args:
+        song_id (int): The ID of the song.
+        playlist_id (int): The ID of the playlist.
+
+    Returns:
+        dict: The updated song object.
+    """
+    
+    ## Add entry to intermediate table
+    response = supabase.table('playlists_songs').insert({
+        'playlist_id': playlist_id,
+        'song_id': song_id
+    }).execute()
+
+    return response.data[0]
+
+def remove_song_from_playlist(song_id, playlist_id):
+    """Remove a song from a playlist.
+
+    Args:
+        song_id (int): The ID of the song.
+        playlist_id (int): The ID of the playlist.
+
+    Returns:
+        dict: The updated song object.
+    """
+    response = supabase.table('playlists_songs').delete().eq('playlist_id', playlist_id).eq('song_id', song_id).execute()
+
+    return response.data[0]

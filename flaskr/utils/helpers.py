@@ -13,7 +13,9 @@ import subprocess
 import tempfile
 import zipfile
 from pydub import AudioSegment
+import numpy as np
 
+logger = logging.getLogger(__name__)
 # Initialize OpenAI client
 client = OpenAI()
 
@@ -95,9 +97,9 @@ def create_song_entry(title=None, artist=None, user_id=None, playlist_id=None, i
         logger.error("An error occurred while creating the song entry: %s", e)
         raise
 
-def upload_song_to_storage(song_id, file_path, track_name):
+def upload_song_to_storage(user_id, song_id, file_path, track_name):
     bucket_name = "yoke-stems"
-    destination_path = f"{song_id}/{track_name}.wav"
+    destination_path = f"{user_id}/{song_id}/{track_name}.wav"
 
     try:
         with open(file_path, "rb") as file:
@@ -135,66 +137,56 @@ def recognize_song(file_path):
         raise
 
 
-# def analyze_audio(file_path):
-#     try:
-#         y, sr = librosa.load(file_path, sr=None)
-#         if np.all(y == 0):
-#             raise ValueError("Audio file is silent or corrupted.")
+def analyze_song(file_path):
+    try:
+        # Load the audio file
+        y, sr = librosa.load(file_path, sr=None)
+        if np.all(y == 0):
+            raise ValueError("Audio file is silent or corrupted.")
+        
+        # Extract global tempo and beats
+        global_tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+        logger.info(f"Global Tempo: {global_tempo}, Beats: {len(beats)}")
 
-#         # Determine an appropriate n_fft value based on the signal length
-#         # n_fft = min(2048, len(y))  # Use 2048 or the length of the signal, whichever is smaller
+        if len(beats) == 0:
+            raise ValueError("No beats detected in the audio.")
 
-#         tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-#         logger.info(f"Tempo: {tempo}, Beats: {beats}")
+        # Harmonic component for key detection
+        harmonic, _ = librosa.effects.hpss(y)
+        if np.all(harmonic == 0):
+            raise ValueError("Harmonic component is silent.")
 
-#         harmonic, _ = librosa.effects.hpss(y)
-#         if np.all(harmonic == 0):
-#             raise ValueError("Harmonic component is silent.")
+        # Key detection for the entire song (Major or Minor)
+        chroma = librosa.feature.chroma_cqt(y=harmonic, sr=sr)
+        chroma_sum = np.sum(chroma, axis=1)
+        key_index = np.argmax(chroma_sum)
+        note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+        
+        # Analyze relative major or minor key
+        is_minor = np.sum(chroma_sum[[0, 2, 4, 5, 7, 9, 11]]) < np.sum(chroma_sum[[1, 3, 6, 8, 10]])
+        overall_key = note_names[key_index % 12] + ('m' if is_minor else '')
 
-#         hop_length = min(512, len(y) // 10)
-#         # Use the dynamically determined n_fft value
-#         chroma = librosa.feature.chroma_cqt(y=harmonic, sr=sr, hop_length=hop_length)
+        # Calculate tempo for a small window around each beat
+        window_size = 2 * sr // 10  # 200ms window around each beat
+        tempo_changes = []
 
-#         def detect_key(chroma_slice):
-#             key_index = np.argmax(np.sum(chroma_slice, axis=1))
-#             return note_names[key_index % 12]
+        for beat_time in beats:
+            start = max(0, int(beat_time * sr) - window_size // 2)
+            end = min(len(y), start + window_size)
+            segment = y[start:end]
 
-#         keys_per_beat = []
-#         tempo_changes = []
+            segment_tempo, _ = librosa.beat.beat_track(y=segment, sr=sr)
+            if segment_tempo > 0:
+                tempo_changes.append(float(segment_tempo))
+            else:
+                tempo_changes.append(float(global_tempo))  # Fallback to global tempo
 
-#         previous_tempo = tempo
-#         tempo_changes.append({'beat': 0, 'tempo': float(previous_tempo)})
+        # Return the overall key and tempo changes
+        return {'song_key': overall_key, 'tempo_changes': tempo_changes}
 
-#         for i in range(len(beats) - 1):
-#             start = int(beats[i])
-#             end = min(int(beats[i + 1]), len(y))
-
-#             if end - start > 0:  # Ensure the segment is valid
-#                 chroma_slice = chroma[:, start:end]
-#                 key = detect_key(chroma_slice)
-#                 keys_per_beat.append(key)
-
-#                 current_tempo, _ = librosa.beat.beat_track(y=y[start:end], sr=sr)
-#                 if np.abs(current_tempo - previous_tempo) > 1:
-#                     tempo_changes.append({'beat': i + 1, 'tempo': float(current_tempo)})
-#                     previous_tempo = current_tempo
-
-#         key_changes = []
-#         previous_key = None
-
-#         for beat, key in enumerate(keys_per_beat):
-#             if key != previous_key:
-#                 key_changes.append({'beat': beat, 'key': key})
-#                 previous_key = key
-
-#         if len(tempo_changes) == 1 and tempo_changes[0]['beat'] == 0:
-#             tempo_changes.append({'beat': len(beats), 'tempo': float(previous_tempo)})
-
-#         return {'key_changes': key_changes, 'tempo_changes': tempo_changes}
-
-#     except Exception as e:
-#         logger.error(f"Error analyzing audio: {e}")
-#         raise
+    except Exception as e:
+        logger.error(f"Error analyzing audio: {e}")
+        raise
 
 
 def get_song_info(artist_name, song_name):
