@@ -1,4 +1,5 @@
 import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from flask import Flask, Blueprint, request, jsonify, send_file
 from flaskr.utils.helpers import (
@@ -7,8 +8,8 @@ from flaskr.utils.helpers import (
     mix_and_zip_stems,
     separate, 
     cleanup_temp_files,
-    recognize_song,
     analyze_song,
+    youtube_to_audio
 )
 
 from flaskr.database_functions.song import (
@@ -34,59 +35,87 @@ OUTPUT_FOLDER = os.path.expanduser('~/tmp_output')
 def upload_song():
     user_id = getattr(request, 'user_id', None)
 
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
+    # Check for a YouTube URL or file upload
+    youtube_url = request.form.get('youtube_url')
+    file = request.files.get('file')
+
+    if not youtube_url and not file:
+        return jsonify({"error": "No file or YouTube URL provided"}), 400
+
+    # Create song entry immediately to get the song id
+    song_entry = create_song({'user_id': user_id})
+
+    # Ensure upload and output directories exist
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+    # Set file paths
+    file_path = os.path.join(UPLOAD_FOLDER, f"{song_entry.get('id')}.wav")
+
+    # Handle file upload or YouTube URL
+    if youtube_url:
+        try:
+            print(f"Downloading YouTube audio from: {youtube_url}")
+            youtube_to_audio(youtube_url, file_path)
+            print(f"WAV file saved to: {file_path}")
+        except Exception as e:
+            return jsonify({"error": str(e)}), 400
+    elif file:
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
+        try:
+            print(f"Saving uploaded file to: {file_path}")
+            file.save(file_path)
+            print(f"WAV file saved to: {file_path}")
+        except Exception as e:
+            return jsonify({"error": "Failed to save file"}), 500
+
+    # Set output path for separated stems
+    output_path = os.path.join(OUTPUT_FOLDER, str(song_entry.get('id')))
+    os.makedirs(output_path, exist_ok=True)
+
+    # Prepare to run tasks in parallel
+    tasks = {
+        "separate": (separate, (file_path, output_path)),
+        "analyze_song": (analyze_song, (file_path,))
+    }
+
+    results = {}
+    try:
+        with ProcessPoolExecutor() as executor:
+            future_to_task = {executor.submit(func, *args): name for name, (func, args) in tasks.items()}
+            for future in as_completed(future_to_task):
+                task_name = future_to_task[future]
+                try:
+                    results[task_name] = future.result()
+                    print(f"Task '{task_name}' completed successfully.")
+                except Exception as exc:
+                    print(f"Task '{task_name}' failed: {exc}")
+                    return jsonify({"error": f"Failed during {task_name} processing"}), 500
+
+    except Exception as e:
+        print(f"Parallel task execution failed: {e}")
+        return jsonify({"error": "Failed to process tasks in parallel"}), 500
+
+    # Update song entry with analysis results
+    analyzed_song = results.get("analyze_song")
+    if analyzed_song:
+        song_entry['tempo_changes'] = analyzed_song.get('tempo_changes')
+        song_entry['song_key'] = analyzed_song.get('song_key')
+
+    # Upload stems to Supabase and update the database
+    stem_names = ['vocals', 'bass', 'drums', 'guitar', 'piano', 'other']
+    upload_song_stems_and_update_db(song_entry, output_path, stem_names)
+
+    # Cleanup temporary files
+    cleanup_temp_files(file_path)
+    cleanup_temp_files(output_path)
+
+    return jsonify({
+        "song": song_entry,
+        "message": "File uploaded, processed, and saved successfully",
+    }), 200
     
-    algorithm = request.form.get('algorithm', 'htdemucs_6s')
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    
-    if file:
-        # Create song entry immediately to get the song id
-        song_entry = create_song({'user_id': user_id})
-
-        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
- 
-        file_path = os.path.join(UPLOAD_FOLDER, str(song_entry.get('id')) + '.mp3')
-        file.save(file_path)
-
-        output_path = os.path.join(OUTPUT_FOLDER, str(song_entry.get('id')))
-        os.makedirs(output_path, exist_ok=True)
-
-        # Recognize the song
-        recognized_song = recognize_song(file_path).get('result')
-
-        if recognized_song:
-            song_entry['artist'] = recognized_song.get('artist')
-            song_entry['title'] = recognized_song.get('title')
-            song_entry['album'] = recognized_song.get('album')
-            song_entry['release_date'] = recognized_song.get('release_date')
-            song_entry['image_url'] = recognized_song.get('spotify').get('album').get('images')[1].get('url')
-
-        # Separate the stems
-        separate(file_path, output_path, algorithm)
-
-        # Analyze the song for tempo and key
-        analyzed_song = analyze_song(file_path)
-
-        if analyzed_song:
-            song_entry['tempo_changes'] = analyzed_song.get('tempo_changes')
-            song_entry['song_key'] = analyzed_song.get('song_key')
-        
-        # Upload stems to Supabase and update the database
-        stem_names = ['vocals', 'bass', 'drums', 'guitar', 'other']
-        upload_song_stems_and_update_db(song_entry, output_path, stem_names)
-
-        # Cleanup temporary files
-        cleanup_temp_files(file_path)
-        cleanup_temp_files(output_path)
-
-        return jsonify({
-            "message": "File uploaded, processed, and saved successfully",
-        }), 200
 
 @song_bp.route('/song', methods=['GET'])
 @authorize
@@ -109,6 +138,14 @@ def get_song_route(song_id):
         "message": "Song fetched successfully",
     }), 200
 
+@song_bp.route('/song/sample', methods=['GET'])
+def get_sample_song_route():
+    song = get_song(402) # Sample song ID
+
+    return jsonify({
+        "song": song,
+        "message": "Song fetched successfully",
+    }), 200
 
 @song_bp.route('/song/<song_id>', methods=['DELETE'])
 @authorize

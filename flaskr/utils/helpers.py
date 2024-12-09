@@ -9,11 +9,11 @@ from openai import OpenAI
 import json
 from flaskr.config import Config
 import requests
-import subprocess
 import tempfile
 import zipfile
 from pydub import AudioSegment
 import numpy as np
+from yt_dlp import YoutubeDL
 
 logger = logging.getLogger(__name__)
 # Initialize OpenAI client
@@ -27,7 +27,7 @@ note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 logger = logging.getLogger(__name__)
 
-def separate(in_path, out_path, algorithm):
+def separate(in_path, out_path):
     """
     Separates stems using Demucs and stores WAV files in the specified output directory.
 
@@ -43,7 +43,7 @@ def separate(in_path, out_path, algorithm):
     os.makedirs(out_path, exist_ok=True)
 
     # Temporary directory for Demucs WAV output
-    temp_output_dir = os.path.join(out_path, algorithm)
+    temp_output_dir = os.path.join(out_path, 'htdemucs_6s')
     os.makedirs(temp_output_dir, exist_ok=True)
 
     # Run the separation
@@ -51,7 +51,7 @@ def separate(in_path, out_path, algorithm):
     try:
         demucs.separate.main([
             "--two-stems", None,  # Separate into vocals and no_vocals
-            "-n", algorithm,      # Use the specified model
+            "-n", 'htdemucs_6s',      # Use the specified model
             str(in_path),         # Input path
             "-o", temp_output_dir,  # Output to the temporary directory
         ])
@@ -306,6 +306,7 @@ def convert_audio(input_file, output_file, file_type):
         print(f"Error converting {input_file} to {file_type}: {e}")
         raise
 
+
 def download_stems_zip(stem_names, file_type, song_id):
     """
     Downloads a ZIP of selected stems in a single specified format from Supabase storage.
@@ -421,3 +422,50 @@ def mix_and_zip_stems(stem_names, song_id, output_format="mp3"):
         # Cleanup temporary files except the ZIP
         if os.path.exists(mixed_file_path):
             os.remove(mixed_file_path)
+
+
+def youtube_to_audio(youtube_url, output_file):
+    """
+    Download a YouTube video and convert it to a WAV audio file.
+
+    Args:
+        youtube_url (str): The URL of the YouTube video.
+        output_file (str): The output WAV file path.
+
+    Returns:
+        str: Path to the downloaded WAV audio file.
+    """
+    try:
+        # Ensure the output file always ends with `.wav`
+        if not output_file.endswith(".wav"):
+            output_file += ".wav"
+
+        # Define yt-dlp options
+        ydl_opts = {
+            'format': 'bestaudio/best',  # Best audio quality available
+            'outtmpl': output_file.replace('.wav', ''),  # Temporary file without .wav
+            'postprocessors': [
+                {
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'wav',  # Extract WAV instead of MP3
+                    'preferredquality': '0',  # Best quality (not applicable to WAV but kept for compatibility)
+                }
+            ],
+            'postprocessor_args': [
+                '-vn',  # Remove video stream
+            ],
+            'noplaylist': True,  # Do not download playlists
+            'quiet': False,      # Display progress and information
+        }
+
+        # Download and process with yt-dlp
+        with YoutubeDL(ydl_opts) as ydl:
+            ydl.download([youtube_url])
+
+        # Ensure the final output file exists
+        if not os.path.exists(output_file):
+            raise FileNotFoundError(f"Output file not found: {output_file}")
+
+        return output_file
+    except Exception as e:
+        raise Exception(f"Error downloading or processing YouTube audio: {e}")

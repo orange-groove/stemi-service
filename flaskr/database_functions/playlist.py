@@ -23,29 +23,41 @@ def create_playlist(playlist):
 
 def get_playlists(user_id):
     """
-    Fetch all playlists for a specific user with their songs included.
+    Fetch all playlists for a specific user with their song count.
 
     Args:
+        user_id (str): The ID of the user whose playlists are to be fetched.
 
     Returns:
-        list: A list of playlists with nested songs.
+        list: A list of playlists with their song count.
     """
     try:
         if not user_id:
             raise ValueError("User ID is required.")
 
-        # Use Supabase query to fetch playlists with nested songs
-        response = supabase.table('playlists').select("*").eq('user_id', user_id).execute()
+        # Fetch playlists with song count using a join and aggregate function
+        response = (
+            supabase
+            .table('playlists')
+            .select('*, playlists_songs (song_id)')
+            .eq('user_id', user_id)
+            .execute()
+        )
 
         if response.data is None:
             raise RuntimeError("Failed to fetch playlists: No data returned.")
         
-        if not response.data:
-            return []  # Return an empty list if no playlists are found.
+        playlists = response.data
 
-        return response.data
+        # Calculate song_count for each playlist
+        for playlist in playlists:
+            playlist['song_count'] = len(playlist.get('playlists_songs', []))
+            # Clean up the `songs_playlists` field if you don't need it in the final result
+            del playlist['playlists_songs']
+
+        return playlists
     except Exception as e:
-        raise RuntimeError(f"Error fetching playlists with songs for user {user_id}: {e}")
+        raise RuntimeError(f"Error fetching playlists with song count for user {user_id}: {e}")
 
 
 def get_playlist(playlist_id):
@@ -217,3 +229,16 @@ def remove_song_from_playlist(song_id, playlist_id):
     response = supabase.table('playlists_songs').delete().eq('playlist_id', playlist_id).eq('song_id', song_id).execute()
 
     return response.data[0]
+
+def get_playlist_song_count(playlist_id):
+    """Fetch the number of songs in a playlist.
+
+    Args:
+        playlist_id (str): The ID of the playlist.
+
+    Returns:
+        int: The number of songs in the playlist.
+    """
+    response = supabase.table('playlists_songs').select('count(*)').eq('playlist_id', playlist_id).execute()
+
+    return response.data[0]['count']

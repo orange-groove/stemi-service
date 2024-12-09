@@ -32,10 +32,6 @@ def get_playlist_songs(playlist_id):
     """
     response = supabase.table('songs').select('*').eq('playlist_id', playlist_id).execute()
 
-    # Handle the response based on its structure
-    if not response.data:  # Check if data exists
-        raise ValueError("No songs found for this playlist.")
-
     return response.data
 
 def get_user_songs(user_id):
@@ -48,11 +44,6 @@ def get_user_songs(user_id):
         list: A list of song objects.
     """
     response = supabase.table('songs').select('*').eq('user_id', user_id).execute()
-
-    # Handle the response based on its structure
-    if not response.data:  # Check if data exists
-        raise ValueError("No songs found for this user.")
-
     return response.data
 
 

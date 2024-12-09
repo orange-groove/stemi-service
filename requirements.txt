@@ -67,6 +67,7 @@ psycopg2==2.9.9
 pycparser==2.22
 pydantic==2.8.2
 pydantic_core==2.20.1
+pydub==0.25.1
 PyJWT==2.9.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
@@ -102,5 +103,6 @@ urllib3==2.2.2
 websockets==12.0
 Werkzeug==3.0.3
 yarl==1.9.4
+yt-dlp==2024.12.3
 zope.event==5.0
 zope.interface==7.0.3

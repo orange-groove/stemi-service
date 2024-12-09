@@ -1,5 +1,3 @@
-from psycopg2.errors import UniqueViolation
-
 from flask import Flask, Blueprint, request, jsonify
 
 from flaskr.database_functions.playlist import (
@@ -10,7 +8,8 @@ from flaskr.database_functions.playlist import (
     get_playlist_songs,
     get_playlist,
     add_song_to_playlist,
-    remove_song_from_playlist
+    remove_song_from_playlist,
+    get_playlist_song_count
 )
 
 from flaskr.decorators.auth import authorize
