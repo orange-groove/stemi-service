@@ -16,6 +16,8 @@ def create_app():
     def healthz():
         return 'Ok'
 
+    app.debug = True
+
     return app
 
 if __name__ == '__main__':

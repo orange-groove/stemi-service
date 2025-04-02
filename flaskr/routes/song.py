@@ -3,7 +3,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from flask import Flask, Blueprint, request, jsonify, send_file
 from flaskr.utils.helpers import (
-    get_song_info,
     download_stems_zip,
     mix_and_zip_stems,
     separate, 
@@ -191,18 +190,18 @@ def update_song_route(song_id):
         return jsonify({"error": str(e)}), 500
 
 
-@song_bp.route('/song/info', methods=['GET'])
-def song_info(user_id):
-    artist = request.args.get('artist')
-    name = request.args.get('name')
+# @song_bp.route('/song/info', methods=['GET'])
+# def song_info(user_id):
+#     artist = request.args.get('artist')
+#     name = request.args.get('name')
     
-    if not artist or not name:
-        return jsonify({"error": "Both 'artist' and 'song' query parameters are required."}), 400
+#     if not artist or not name:
+#         return jsonify({"error": "Both 'artist' and 'song' query parameters are required."}), 400
 
-    info = get_song_info(artist, name)
-    # popups = get_popup_info(artist, name)
+#     info = get_song_info(artist, name)
+#     # popups = get_popup_info(artist, name)
     
-    return jsonify({"user_id": user_id, "artist": artist, "name": name, "info": info}), 200
+#     return jsonify({"user_id": user_id, "artist": artist, "name": name, "info": info}), 200
 
 
 @song_bp.route('/song/<song_id>/download_stems', methods=['POST'])

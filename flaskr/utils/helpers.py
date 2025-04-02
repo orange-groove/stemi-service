@@ -17,7 +17,7 @@ from yt_dlp import YoutubeDL
 
 logger = logging.getLogger(__name__)
 # Initialize OpenAI client
-client = OpenAI()
+# client = OpenAI()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -189,54 +189,54 @@ def analyze_song(file_path):
         raise
 
 
-def get_song_info(artist_name, song_name):
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant that provides detailed information about songs and artists."},
-        {"role": "user", "content": f"Please provide information about the song '{song_name}' by the artist '{artist_name}'."}
-    ]
+# def get_song_info(artist_name, song_name):
+#     messages = [
+#         {"role": "system", "content": "You are a helpful assistant that provides detailed information about songs and artists."},
+#         {"role": "user", "content": f"Please provide information about the song '{song_name}' by the artist '{artist_name}'."}
+#     ]
 
-    try:
-        completion = client.chat.completions.create(
-            model="gpt-4",
-            messages=messages,
-            max_tokens=1000,
-            temperature=0.7
-        )
+#     try:
+#         completion = client.chat.completions.create(
+#             model="gpt-4",
+#             messages=messages,
+#             max_tokens=1000,
+#             temperature=0.7
+#         )
 
-        # Parse the JSON string into a Python dictionary
-        song_info = json.loads(completion.choices[0].message.model_dump_json())
-        return song_info
-    except Exception as e:
-        logger.error(f"Error getting song info from OpenAI: {e}")
-        raise
+#         # Parse the JSON string into a Python dictionary
+#         song_info = json.loads(completion.choices[0].message.model_dump_json())
+#         return song_info
+#     except Exception as e:
+#         logger.error(f"Error getting song info from OpenAI: {e}")
+#         raise
 
 
-def get_popup_info(artist_name, song_name):
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant that provides detailed information about songs and artists in the form of VH1 Pop up video."},
-        {"role": "user", "content": f"Please provide information about the song '{song_name}' by the artist '{artist_name}'. Format the output as a JSON array of 3 strings containing fun facts about the song and artist."}
-    ]
+# def get_popup_info(artist_name, song_name):
+#     messages = [
+#         {"role": "system", "content": "You are a helpful assistant that provides detailed information about songs and artists in the form of VH1 Pop up video."},
+#         {"role": "user", "content": f"Please provide information about the song '{song_name}' by the artist '{artist_name}'. Format the output as a JSON array of 3 strings containing fun facts about the song and artist."}
+#     ]
 
-    try:
-        completion = client.chat.completions.create(
-            model="gpt-4",
-            messages=messages,
-            max_tokens=1000,
-            temperature=0.7
-        )
+#     try:
+#         completion = client.chat.completions.create(
+#             model="gpt-4",
+#             messages=messages,
+#             max_tokens=1000,
+#             temperature=0.7
+#         )
 
-        # Parse the content into a JSON array
-        popups = completion.choices[0].message.model_dump_json()
-        popups_dict = json.loads(popups)
+#         # Parse the content into a JSON array
+#         popups = completion.choices[0].message.model_dump_json()
+#         popups_dict = json.loads(popups)
 
-        # Ensure that the 'content' field is parsed as an array
-        if 'content' in popups_dict:
-            popups_dict['content'] = json.loads(popups_dict['content'])
+#         # Ensure that the 'content' field is parsed as an array
+#         if 'content' in popups_dict:
+#             popups_dict['content'] = json.loads(popups_dict['content'])
 
-        return popups_dict
-    except Exception as e:
-        logger.error(f"Error getting pop-up info from OpenAI: {e}")
-        raise
+#         return popups_dict
+#     except Exception as e:
+#         logger.error(f"Error getting pop-up info from OpenAI: {e}")
+#         raise
 
 
 def combine_stems(stem_paths, output_path):

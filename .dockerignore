@@ -1,2 +1,12 @@
 .vscode
 .venv
+
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.log
+.git
+.vscode
+.env
