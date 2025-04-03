@@ -14,6 +14,8 @@ import zipfile
 from pydub import AudioSegment
 import numpy as np
 from yt_dlp import YoutubeDL
+import torch
+import demucs.api
 
 logger = logging.getLogger(__name__)
 # Initialize OpenAI client
@@ -30,51 +32,36 @@ logger = logging.getLogger(__name__)
 def separate(in_path, out_path):
     """
     Separates stems using Demucs and stores WAV files in the specified output directory.
-
-    Parameters:
-    - in_path: Path to the input audio file.
-    - out_path: Path to the directory where output stems will be stored.
-    - algorithm: The Demucs algorithm/model to use.
+    Optimized for GPU acceleration and better resource management.
     """
-    in_path = os.path.abspath(in_path)  # Ensure absolute path
-    out_path = os.path.abspath(out_path)  # Ensure absolute path
-
-    # Ensure the output directory exists
+    # Check if GPU is available
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    logger.info(f"Using device: {device}")
+    
+    in_path = os.path.abspath(in_path)
+    out_path = os.path.abspath(out_path)
     os.makedirs(out_path, exist_ok=True)
 
-    # Temporary directory for Demucs WAV output
-    temp_output_dir = os.path.join(out_path, 'htdemucs_6s')
-    os.makedirs(temp_output_dir, exist_ok=True)
-
-    # Run the separation
-    logger.info(f"Running Demucs separation on {in_path} with temporary output directory {temp_output_dir}")
     try:
-        demucs.separate.main([
-            "--two-stems", None,  # Separate into vocals and no_vocals
-            "-n", 'htdemucs_6s',      # Use the specified model
-            str(in_path),         # Input path
-            "-o", temp_output_dir,  # Output to the temporary directory
-        ])
+        # Use the Demucs API for better performance
+        separator = demucs.api.Separator(
+            model='htdemucs',
+            device=device,
+            progress=True
+        )
+        
+        # Process the audio file
+        stems = separator.separate_file(in_path)
+        
+        # Save the stems
+        for stem_name, stem_data in stems.items():
+            output_file = os.path.join(out_path, f"{stem_name}.wav")
+            sf.write(output_file, stem_data, separator.samplerate)
+            logger.info(f"Saved {stem_name} to {output_file}")
+            
     except Exception as e:
-        logger.error(f"Error running Demucs: {e}")
+        logger.error(f"Error during stem separation: {str(e)}")
         raise
-
-    # Move WAV files to the final output directory
-    for root, _, files in os.walk(temp_output_dir):
-        for file in files:
-            if file.endswith(".wav"):
-                input_wav = os.path.join(root, file)
-                output_wav = os.path.join(out_path, file)  # Keep the original WAV file name
-                shutil.move(input_wav, output_wav)
-
-    # Clean up the temporary directory
-    shutil.rmtree(temp_output_dir)
-
-    # Check if the output directory has files
-    if not os.listdir(out_path):
-        raise RuntimeError(f"Demucs did not generate any files in {out_path}.")
-    else:
-        logger.info(f"Demucs separation completed successfully. Output files: {os.listdir(out_path)}")
 
 
 def create_song_entry(title=None, artist=None, user_id=None, playlist_id=None, image_url=None, release_date=None):

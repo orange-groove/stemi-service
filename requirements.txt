@@ -4,20 +4,20 @@ Flask-Cors==4.0.1
 gunicorn==23.0.0
 
 # Audio Processing
-demucs==4.0.1  # For stem separation
-librosa==0.10.2.post1  # For audio analysis
-soundfile==0.12.1  # For audio file handling
-pydub==0.25.1  # For audio processing
-numpy==2.0.2  # Required by librosa and demucs
-torch==2.4.0  # Required by demucs
-torchaudio==2.4.0  # Required by demucs
+demucs==4.0.1
+librosa==0.10.2.post1
+soundfile==0.12.1
+pydub==0.25.1
+numpy>=2.0.2
+torch>=2.4.0
+torchaudio>=2.4.0
 
 # Database and Storage
-supabase==2.7.2  # For database and storage
-PyJWT==2.9.0  # For authentication
+supabase==2.7.2
+PyJWT==2.9.0
 
 # YouTube Download
-yt-dlp==2024.12.3  # For YouTube audio downloads
+yt-dlp==2024.12.3
 
 # Utilities
-python-dotenv==1.0.1  # For environment variables
+python-dotenv==1.0.1
