@@ -4,8 +4,6 @@ steps:
     args: ['build', 
            '-t', 'gcr.io/$PROJECT_ID/yoke',
            '--cache-from', 'gcr.io/$PROJECT_ID/yoke:latest',
-           '--memory', '1.5G',
-           '--memory-swap', '2G',
            '.']
 
   # Push the container image to Container Registry
@@ -26,7 +24,7 @@ steps:
       - '--platform'
       - 'managed'
       - '--memory'
-      - '1.5G'
+      - '2Gi'
       - '--cpu'
       - '1'
       - '--timeout'
@@ -36,6 +34,14 @@ steps:
       - '--allow-unauthenticated'
       - '--min-instances'
       - '1'  # Keep at least one instance warm
+      - '--set-cloudsql-instances'
+      - 'yoke-434400:us-east1:yoke-db'
+      - '--vpc-connector'
+      - 'yoke-connector'
+      - '--vpc-egress'
+      - 'all'
+      - '--execution-environment'
+      - 'gen2'
 
   # Deploy GPU service
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -51,7 +57,7 @@ steps:
       - '--platform'
       - 'managed'
       - '--memory'
-      - '3G'
+      - '4Gi'
       - '--cpu'
       - '2'
       - '--timeout'
@@ -67,6 +73,12 @@ steps:
       - '--allow-unauthenticated'
       - '--min-instances'
       - '0'  # Allow GPU service to scale to zero
+      - '--set-cloudsql-instances'
+      - 'yoke-434400:us-east1:yoke-db'
+      - '--vpc-connector'
+      - 'yoke-connector'
+      - '--vpc-egress'
+      - 'all'
 
 images:
   - 'gcr.io/$PROJECT_ID/yoke'
