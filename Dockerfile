@@ -33,4 +33,4 @@ ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 
 # Run the Flask app with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "4", "--worker-class", "sync", "--timeout", "100000", "--log-level", "info", "flaskr:create_app()"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--worker-class", "sync", "--timeout", "300", "--log-level", "info", "flaskr:create_app()"]

@@ -4,6 +4,8 @@ steps:
     args: ['build', 
            '-t', 'gcr.io/$PROJECT_ID/yoke',
            '--cache-from', 'gcr.io/$PROJECT_ID/yoke:latest',
+           '--memory', '1.5G',
+           '--memory-swap', '2G',
            '.']
 
   # Push the container image to Container Registry
@@ -24,7 +26,7 @@ steps:
       - '--platform'
       - 'managed'
       - '--memory'
-      - '2560Mi'
+      - '1.5G'
       - '--cpu'
       - '1'
       - '--timeout'
@@ -49,7 +51,7 @@ steps:
       - '--platform'
       - 'managed'
       - '--memory'
-      - '4096Mi'
+      - '3G'
       - '--cpu'
       - '2'
       - '--timeout'
