@@ -24,7 +24,7 @@ steps:
       - '--platform'
       - 'managed'
       - '--memory'
-      - '2Gi'
+      - '2.5Gi'
       - '--cpu'
       - '1'
       - '--timeout'
