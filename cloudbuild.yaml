@@ -1,0 +1,74 @@
+steps:
+  # Build the container image with caching
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', 
+           '-t', 'gcr.io/$PROJECT_ID/yoke',
+           '--cache-from', 'gcr.io/$PROJECT_ID/yoke:latest',
+           '.']
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/yoke']
+
+  # Deploy CPU service
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'yoke'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/yoke'
+      - '--region'
+      - 'us-east1'
+      - '--platform'
+      - 'managed'
+      - '--memory'
+      - '8Gi'
+      - '--cpu'
+      - '2'
+      - '--timeout'
+      - '3600'
+      - '--set-env-vars'
+      - 'SUPABASE_URL=${_SUPABASE_URL},SUPABASE_KEY=${_SUPABASE_KEY}'
+      - '--allow-unauthenticated'
+      - '--min-instances'
+      - '1'  # Keep at least one instance warm
+
+  # Deploy GPU service
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'yoke-gpu'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/yoke'
+      - '--region'
+      - 'us-east1'
+      - '--platform'
+      - 'managed'
+      - '--memory'
+      - '16Gi'
+      - '--cpu'
+      - '4'
+      - '--timeout'
+      - '3600'
+      - '--execution-environment'
+      - 'gen2'
+      - '--gpu-type'
+      - 'nvidia-tesla-t4'
+      - '--gpu-count'
+      - '1'
+      - '--set-env-vars'
+      - 'SUPABASE_URL=${_SUPABASE_URL},SUPABASE_KEY=${_SUPABASE_KEY}'
+      - '--allow-unauthenticated'
+      - '--min-instances'
+      - '0'  # Allow GPU service to scale to zero
+
+images:
+  - 'gcr.io/$PROJECT_ID/yoke'
+
+options:
+  logging: CLOUD_LOGGING_ONLY  # Reduce build logs
+  machineType: 'E2_HIGHCPU_8'  # Use a faster machine for builds 
