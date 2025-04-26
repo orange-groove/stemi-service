@@ -5,7 +5,7 @@ from flaskr.supabase_client import supabase
 import logging
 import librosa
 import soundfile as sf
-from openai import OpenAI
+# from openai import OpenAI
 import json
 from flaskr.config import Config
 import requests
