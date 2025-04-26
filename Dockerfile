@@ -20,7 +20,11 @@ WORKDIR /app
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Install Python packages with verbose output
+RUN pip3 install --no-cache-dir -v -r requirements.txt && \
+    pip3 list | grep demucs && \
+    python3 -c "import demucs; print(demucs.__version__); print(demucs.__file__)"
 
 # Copy the rest of the application
 COPY . .

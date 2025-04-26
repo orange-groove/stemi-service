@@ -15,7 +15,7 @@ from pydub import AudioSegment
 import numpy as np
 from yt_dlp import YoutubeDL
 import torch
-import demucs.api
+import demucs
 
 logger = logging.getLogger(__name__)
 # Initialize OpenAI client
