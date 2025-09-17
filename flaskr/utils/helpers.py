@@ -56,7 +56,7 @@ def separate(in_path, out_path):
         try:
             sys.argv = [
                 'demucs.separate',
-                '-n', 'htdemucs',
+                '-n', 'htdemucs_6s',
                 '-d', device,
                 '-o', temp_demucs_dir,
                 in_path
@@ -69,13 +69,35 @@ def separate(in_path, out_path):
             import glob
             import shutil
             
-            # Look for the demucs output directory
-            demucs_output_dirs = glob.glob(os.path.join(temp_demucs_dir, 'htdemucs', '*'))
+            # Look for the demucs output directory - htdemucs_6s creates nested structure
+            # First find the song directory inside htdemucs_6s
+            song_dirs = glob.glob(os.path.join(temp_demucs_dir, 'htdemucs_6s', '*'))
+            demucs_output_dirs = []
+            
+            for song_dir in song_dirs:
+                if os.path.isdir(song_dir):
+                    demucs_output_dirs.append(song_dir)
+                    break
+            
+            if not demucs_output_dirs:
+                # Fallback to other model patterns
+                demucs_output_dirs = glob.glob(os.path.join(temp_demucs_dir, 'htdemucs', '*'))
+            
+            logger.info(f"Looking for demucs output in: {temp_demucs_dir}")
+            logger.info(f"Found demucs output dirs: {demucs_output_dirs}")
+            
             if demucs_output_dirs:
                 demucs_output_dir = demucs_output_dirs[0]
+                logger.info(f"Using demucs output dir: {demucs_output_dir}")
+                
+                # List all files in the demucs output directory
+                all_files = os.listdir(demucs_output_dir)
+                logger.info(f"All files in demucs output: {all_files}")
                 
                 # Copy the stem files to our output directory
                 stem_files = glob.glob(os.path.join(demucs_output_dir, '*.wav'))
+                logger.info(f"Found demucs output files: {stem_files}")
+                
                 stem_names = ['vocals', 'bass', 'drums', 'guitar', 'piano', 'other']
                 
                 for i, stem_file in enumerate(stem_files):
@@ -84,6 +106,12 @@ def separate(in_path, out_path):
                         output_file = os.path.join(out_path, f"{stem_name}.wav")
                         shutil.copy2(stem_file, output_file)
                         logger.info(f"Copied {stem_file} to {output_file}")
+                    else:
+                        logger.warning(f"Extra stem file found: {stem_file}")
+                
+                # Check what files were actually created
+                created_files = glob.glob(os.path.join(out_path, '*.wav'))
+                logger.info(f"Final output files created: {created_files}")
                 
                 # Clean up
                 shutil.rmtree(temp_demucs_dir)

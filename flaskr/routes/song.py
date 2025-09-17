@@ -24,14 +24,23 @@ def validate_session_access(session_id, user_id):
     import json
     
     # Find the temporary output directory for this session
-    temp_dirs = glob.glob(f"/tmp/tmp*/output_{session_id}_*")
+    import tempfile
+    temp_base = tempfile.gettempdir()
+    temp_dirs = glob.glob(f"{temp_base}/output_{session_id}_*")
+    
+    print(f"Looking for session {session_id}, found temp dirs: {temp_dirs}")
+    print(f"Searching in temp base: {temp_base}")
+        
     if not temp_dirs:
+        print(f"No temp directories found for session {session_id}")
         return False, None
         
     output_path = temp_dirs[0]
     metadata_file = os.path.join(output_path, "session_metadata.json")
+    print(f"Looking for metadata file: {metadata_file}")
     
     if not os.path.exists(metadata_file):
+        print(f"Metadata file not found: {metadata_file}")
         return False, None
         
     # Load session metadata
@@ -39,12 +48,16 @@ def validate_session_access(session_id, user_id):
         with open(metadata_file, 'r') as f:
             session_metadata = json.load(f)
         
+        print(f"Loaded session metadata: {session_metadata}")
+        
         # Check if user owns this session
         if session_metadata.get('user_id') != user_id:
+            print(f"User ID mismatch: expected {user_id}, got {session_metadata.get('user_id')}")
             return False, None
             
         return True, session_metadata
-    except Exception:
+    except Exception as e:
+        print(f"Error loading session metadata: {e}")
         return False, None
 
 
@@ -94,10 +107,13 @@ def process_song():
 
         # Process the song - just separate stems
         try:
+            print(f"Starting stem separation for {file_path} -> {output_path}")
             separate(file_path, output_path)
             print("Stem separation completed successfully.")
         except Exception as e:
             print(f"Stem separation failed: {e}")
+            import traceback
+            traceback.print_exc()
             return jsonify({"error": "Failed during stem separation processing"}), 500
 
         # Store session metadata in a simple JSON file for persistence
@@ -112,11 +128,21 @@ def process_song():
         
         # Save session metadata
         metadata_file = os.path.join(temp_output_dir, "session_metadata.json")
+        print(f"Creating metadata file: {metadata_file}")
         with open(metadata_file, 'w') as f:
             json.dump(session_metadata, f)
+        print(f"Metadata file created successfully")
+        
+        # Verify the metadata file exists
+        if os.path.exists(metadata_file):
+            print(f"Metadata file verified to exist: {metadata_file}")
+        else:
+            print(f"ERROR: Metadata file not found after creation: {metadata_file}")
 
         # Clean up upload directory (we only need the output stems)
         cleanup_temp_files(temp_upload_dir)
+        print(f"Cleaned up upload directory: {temp_upload_dir}")
+        print(f"Output directory still exists: {temp_output_dir}")
 
         response_data = {
             "session_id": session_id,
@@ -132,9 +158,9 @@ def process_song():
         return jsonify(response_data), 200
         
     except Exception as e:
-        # Cleanup on error
+        # Cleanup on error - only clean up upload directory, keep output for debugging
         cleanup_temp_files(temp_upload_dir)
-        cleanup_temp_files(temp_output_dir)
+        # Don't clean up temp_output_dir here - let it persist for debugging
         return jsonify({"error": f"Processing failed: {str(e)}"}), 500
     
 
