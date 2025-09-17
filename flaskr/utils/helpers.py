@@ -43,34 +43,68 @@ def separate(in_path, out_path):
     os.makedirs(out_path, exist_ok=True)
 
     try:
-        # Use the Demucs API for better performance
-        separator = demucs.api.Separator(
-            model='htdemucs',
-            device=device,
-            progress=True
-        )
+        # Use the simpler demucs approach
+        from demucs.separate import main as demucs_main
+        import sys
+        import tempfile
         
-        # Process the audio file
-        stems = separator.separate_file(in_path)
+        # Create a temporary directory for demucs output
+        temp_demucs_dir = tempfile.mkdtemp()
         
-        # Save the stems
-        for stem_name, stem_data in stems.items():
-            output_file = os.path.join(out_path, f"{stem_name}.wav")
-            sf.write(output_file, stem_data, separator.samplerate)
-            logger.info(f"Saved {stem_name} to {output_file}")
+        # Save original sys.argv and replace with demucs arguments
+        original_argv = sys.argv.copy()
+        try:
+            sys.argv = [
+                'demucs.separate',
+                '-n', 'htdemucs',
+                '-d', device,
+                '-o', temp_demucs_dir,
+                in_path
+            ]
+            
+            # Run demucs
+            demucs_main()
+            
+            # Find the output files
+            import glob
+            import shutil
+            
+            # Look for the demucs output directory
+            demucs_output_dirs = glob.glob(os.path.join(temp_demucs_dir, 'htdemucs', '*'))
+            if demucs_output_dirs:
+                demucs_output_dir = demucs_output_dirs[0]
+                
+                # Copy the stem files to our output directory
+                stem_files = glob.glob(os.path.join(demucs_output_dir, '*.wav'))
+                stem_names = ['vocals', 'bass', 'drums', 'guitar', 'piano', 'other']
+                
+                for i, stem_file in enumerate(stem_files):
+                    if i < len(stem_names):
+                        stem_name = stem_names[i]
+                        output_file = os.path.join(out_path, f"{stem_name}.wav")
+                        shutil.copy2(stem_file, output_file)
+                        logger.info(f"Copied {stem_file} to {output_file}")
+                
+                # Clean up
+                shutil.rmtree(temp_demucs_dir)
+            else:
+                raise ValueError("No demucs output found")
+                
+        finally:
+            # Restore original sys.argv
+            sys.argv = original_argv
             
     except Exception as e:
         logger.error(f"Error during stem separation: {str(e)}")
         raise
 
 
-def create_song_entry(title=None, artist=None, user_id=None, playlist_id=None, image_url=None, release_date=None):
+def create_song_entry(title=None, artist=None, user_id=None, image_url=None, release_date=None):
     # Create the song entry dictionary
     song_entry = {
         "title": title,
         "artist": artist,
         "user_id": user_id,
-        "playlist_id": playlist_id,
         "image_url": image_url,
         "release_date": release_date,
         "tracks": []  # Initially empty, will be populated later
@@ -122,108 +156,6 @@ def recognize_song(file_path):
     except Exception as e:
         logger.error(f"Error recognizing song: {e}")
         raise
-
-
-def analyze_song(file_path):
-    try:
-        # Load the audio file
-        y, sr = librosa.load(file_path, sr=None)
-        if np.all(y == 0):
-            raise ValueError("Audio file is silent or corrupted.")
-        
-        # Extract global tempo and beats
-        global_tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-        logger.info(f"Global Tempo: {global_tempo}, Beats: {len(beats)}")
-
-        if len(beats) == 0:
-            raise ValueError("No beats detected in the audio.")
-
-        # Harmonic component for key detection
-        harmonic, _ = librosa.effects.hpss(y)
-        if np.all(harmonic == 0):
-            raise ValueError("Harmonic component is silent.")
-
-        # Key detection for the entire song (Major or Minor)
-        chroma = librosa.feature.chroma_cqt(y=harmonic, sr=sr)
-        chroma_sum = np.sum(chroma, axis=1)
-        key_index = np.argmax(chroma_sum)
-        note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-        
-        # Analyze relative major or minor key
-        is_minor = np.sum(chroma_sum[[0, 2, 4, 5, 7, 9, 11]]) < np.sum(chroma_sum[[1, 3, 6, 8, 10]])
-        overall_key = note_names[key_index % 12] + ('m' if is_minor else '')
-
-        # Calculate tempo for a small window around each beat
-        window_size = 2 * sr // 10  # 200ms window around each beat
-        tempo_changes = []
-
-        for beat_time in beats:
-            start = max(0, int(beat_time * sr) - window_size // 2)
-            end = min(len(y), start + window_size)
-            segment = y[start:end]
-
-            segment_tempo, _ = librosa.beat.beat_track(y=segment, sr=sr)
-            if segment_tempo > 0:
-                tempo_changes.append(float(segment_tempo))
-            else:
-                tempo_changes.append(float(global_tempo))  # Fallback to global tempo
-
-        # Return the overall key and tempo changes
-        return {'song_key': overall_key, 'tempo_changes': tempo_changes}
-
-    except Exception as e:
-        logger.error(f"Error analyzing audio: {e}")
-        raise
-
-
-# def get_song_info(artist_name, song_name):
-#     messages = [
-#         {"role": "system", "content": "You are a helpful assistant that provides detailed information about songs and artists."},
-#         {"role": "user", "content": f"Please provide information about the song '{song_name}' by the artist '{artist_name}'."}
-#     ]
-
-#     try:
-#         completion = client.chat.completions.create(
-#             model="gpt-4",
-#             messages=messages,
-#             max_tokens=1000,
-#             temperature=0.7
-#         )
-
-#         # Parse the JSON string into a Python dictionary
-#         song_info = json.loads(completion.choices[0].message.model_dump_json())
-#         return song_info
-#     except Exception as e:
-#         logger.error(f"Error getting song info from OpenAI: {e}")
-#         raise
-
-
-# def get_popup_info(artist_name, song_name):
-#     messages = [
-#         {"role": "system", "content": "You are a helpful assistant that provides detailed information about songs and artists in the form of VH1 Pop up video."},
-#         {"role": "user", "content": f"Please provide information about the song '{song_name}' by the artist '{artist_name}'. Format the output as a JSON array of 3 strings containing fun facts about the song and artist."}
-#     ]
-
-#     try:
-#         completion = client.chat.completions.create(
-#             model="gpt-4",
-#             messages=messages,
-#             max_tokens=1000,
-#             temperature=0.7
-#         )
-
-#         # Parse the content into a JSON array
-#         popups = completion.choices[0].message.model_dump_json()
-#         popups_dict = json.loads(popups)
-
-#         # Ensure that the 'content' field is parsed as an array
-#         if 'content' in popups_dict:
-#             popups_dict['content'] = json.loads(popups_dict['content'])
-
-#         return popups_dict
-#     except Exception as e:
-#         logger.error(f"Error getting pop-up info from OpenAI: {e}")
-#         raise
 
 
 def combine_stems(stem_paths, output_path):
@@ -294,67 +226,60 @@ def convert_audio(input_file, output_file, file_type):
         raise
 
 
-def download_stems_zip(stem_names, file_type, song_id):
+def download_stems_zip(stem_names, file_type, session_id, output_path):
     """
-    Downloads a ZIP of selected stems in a single specified format from Supabase storage.
+    Creates a ZIP of selected stems in a single specified format from local temporary files.
 
     Parameters:
     - stem_names (list): List of stem names to include (e.g., ['vocals', 'guitar']).
     - file_type (str): Target file type for the download ('wav', 'mp3', or 'ogg').
-    - playlist_id (str): Playlist ID to locate stems.
-    - song_id (str): Song ID to locate stems.
-    - supabase_url (str): Supabase project URL.
-    - supabase_key (str): Supabase API key.
+    - session_id (str): Session ID for naming the ZIP file.
+    - output_path (str): Path to the directory containing the stem files.
 
     Returns:
     - path to the ZIP file.
     """
 
-    # Temp directory for downloaded files
+    # Temp directory for processing
     temp_dir = tempfile.mkdtemp()
-    zip_file_path = os.path.join(temp_dir, f"{song_id}_stems.zip")
+    zip_file_path = os.path.join(temp_dir, f"{session_id}_stems.zip")
 
     # Create a ZIP file
     with zipfile.ZipFile(zip_file_path, "w") as zipf:
         for stem in stem_names:
-            file_name = f"{stem}.wav"  # Assume original files are WAV
-            supabase_path = f"{song_id}/{file_name}"
+            input_file_name = f"{stem}.wav"  # Original files are WAV
+            input_file_path = os.path.join(output_path, input_file_name)
 
-            # Download the file from Supabase
-            try:
-                response = supabase.storage.from_("yoke-stems").download(supabase_path)
-                if response:
-                    # Save the downloaded WAV file
-                    wav_path = os.path.join(temp_dir, file_name)
-                    with open(wav_path, "wb") as f:
-                        f.write(response)
-
+            if os.path.exists(input_file_path):
+                try:
                     # Convert to the desired format
                     output_file_name = f"{stem}.{file_type}"
                     output_file_path = os.path.join(temp_dir, output_file_name)
-                    convert_audio(wav_path, output_file_path, file_type)
+                    convert_audio(input_file_path, output_file_path, file_type)
 
                     # Add to ZIP
                     zipf.write(output_file_path, arcname=output_file_name)
 
                     # Clean up individual files
-                    os.remove(wav_path)
                     os.remove(output_file_path)
-            except Exception as e:
-                print(f"Could not process {supabase_path}: {e}")
+                except Exception as e:
+                    logger.error(f"Could not process {stem}: {e}")
+            else:
+                logger.warning(f"Stem file not found: {input_file_path}")
 
     # Return path to the ZIP file
     return zip_file_path
 
 
-def mix_and_zip_stems(stem_names, song_id, output_format="mp3"):
+def mix_and_zip_stems(stem_names, session_id, output_format="mp3", output_path=None):
     """
     Mixes the provided stems into a single audio file and returns a ZIP file path.
 
     Parameters:
     - stem_names (list): List of stem names to mix (e.g., ['vocals', 'guitar']).
-    - song_id (str): Song ID to locate stems in the bucket.
+    - session_id (str): Session ID for naming the output file.
     - output_format (str): The format of the mixed-down audio file ('mp3', 'wav', etc.).
+    - output_path (str): Path to the directory containing the stem files.
 
     Returns:
     - str: Path to the ZIP file containing the mixed-down audio.
@@ -362,24 +287,17 @@ def mix_and_zip_stems(stem_names, song_id, output_format="mp3"):
 
     # Temporary directory for processing
     temp_dir = tempfile.mkdtemp()
-    mixed_file_name = f"{song_id}_mixdown.{output_format}"
+    mixed_file_name = f"{session_id}_mixdown.{output_format}"
     mixed_file_path = os.path.join(temp_dir, mixed_file_name)
 
     try:
         # Load and mix stems
         mixed_audio = None
         for stem in stem_names:
-            file_name = f"{stem}.wav"  # Assume original files are WAV
-            supabase_path = f"{song_id}/{file_name}"
+            file_name = f"{stem}.wav"  # Original files are WAV
+            stem_path = os.path.join(output_path, file_name)
 
-            # Download the stem
-            response = supabase.storage.from_("yoke-stems").download(supabase_path)
-            if response:
-                # Save the stem locally
-                stem_path = os.path.join(temp_dir, file_name)
-                with open(stem_path, "wb") as f:
-                    f.write(response)
-
+            if os.path.exists(stem_path):
                 # Load the stem audio
                 stem_audio = AudioSegment.from_file(stem_path)
 
@@ -388,6 +306,8 @@ def mix_and_zip_stems(stem_names, song_id, output_format="mp3"):
                     mixed_audio = stem_audio
                 else:
                     mixed_audio = mixed_audio.overlay(stem_audio)
+            else:
+                logger.warning(f"Stem file not found: {stem_path}")
 
         # Export the mixed-down audio
         if mixed_audio is not None:
@@ -396,14 +316,14 @@ def mix_and_zip_stems(stem_names, song_id, output_format="mp3"):
             raise ValueError("No stems found to mix.")
 
         # Create a ZIP file containing the mixdown
-        zip_file_path = os.path.join(temp_dir, f"{song_id}_mixdown.zip")
+        zip_file_path = os.path.join(temp_dir, f"{session_id}_mixdown.zip")
         with zipfile.ZipFile(zip_file_path, "w") as zipf:
             zipf.write(mixed_file_path, arcname=mixed_file_name)
 
         return zip_file_path
 
     except Exception as e:
-        print(f"Error mixing stems: {e}")
+        logger.error(f"Error mixing stems: {e}")
         raise
     finally:
         # Cleanup temporary files except the ZIP

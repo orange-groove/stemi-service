@@ -1,5 +1,4 @@
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from flask import Flask, Blueprint, request, jsonify, send_file
 from flaskr.utils.helpers import (
@@ -7,17 +6,6 @@ from flaskr.utils.helpers import (
     mix_and_zip_stems,
     separate, 
     cleanup_temp_files,
-    analyze_song,
-    youtube_to_audio
-)
-
-from flaskr.database_functions.song import (
-    get_song,
-    get_user_songs,
-    delete_song,
-    update_song,
-    create_song,
-    upload_song_stems_and_update_db,
 )
 
 from flaskr.decorators.auth import authorize
@@ -26,14 +14,59 @@ app = Flask(__name__)
 
 song_bp = Blueprint('song_bp', __name__)
 
-UPLOAD_FOLDER = os.path.expanduser('~/tmp_uploads')
-OUTPUT_FOLDER = os.path.expanduser('~/tmp_output')
 
-@song_bp.route('/song', methods=['POST'])
+def validate_session_access(session_id, user_id):
+    """
+    Validate that the user has access to the session.
+    Returns (is_valid, session_metadata) tuple.
+    """
+    import glob
+    import json
+    
+    # Find the temporary output directory for this session
+    temp_dirs = glob.glob(f"/tmp/tmp*/output_{session_id}_*")
+    if not temp_dirs:
+        return False, None
+        
+    output_path = temp_dirs[0]
+    metadata_file = os.path.join(output_path, "session_metadata.json")
+    
+    if not os.path.exists(metadata_file):
+        return False, None
+        
+    # Load session metadata
+    try:
+        with open(metadata_file, 'r') as f:
+            session_metadata = json.load(f)
+        
+        # Check if user owns this session
+        if session_metadata.get('user_id') != user_id:
+            return False, None
+            
+        return True, session_metadata
+    except Exception:
+        return False, None
+
+
+@song_bp.route('/process', methods=['POST'])
 @authorize
-def upload_song():
+def process_song():
+    """
+    Process a song file or YouTube URL and return session info for preview and download.
+    Session data persists until explicitly deleted by frontend.
+    """
+    import uuid
+    import tempfile
+    import json
+    
+    # Get user ID from auth decorator
     user_id = getattr(request, 'user_id', None)
-
+    if not user_id:
+        return jsonify({"error": "User authentication required"}), 401
+    
+    # Generate unique session ID for this processing request
+    session_id = str(uuid.uuid4())
+    
     # Check for a YouTube URL or file upload
     youtube_url = request.form.get('youtube_url')
     file = request.files.get('file')
@@ -41,25 +74,15 @@ def upload_song():
     if not youtube_url and not file:
         return jsonify({"error": "No file or YouTube URL provided"}), 400
 
-    # Create song entry immediately to get the song id
-    song_entry = create_song({'user_id': user_id})
+    # Create temporary directories for this session
+    temp_upload_dir = tempfile.mkdtemp(prefix=f"upload_{session_id}_")
+    temp_output_dir = tempfile.mkdtemp(prefix=f"output_{session_id}_")
+    
+    try:
+        # Set file paths
+        file_path = os.path.join(temp_upload_dir, f"input.wav")
+        output_path = temp_output_dir
 
-    # Ensure upload and output directories exist
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-    # Set file paths
-    file_path = os.path.join(UPLOAD_FOLDER, f"{song_entry.get('id')}.wav")
-
-    # Handle file upload or YouTube URL
-    if youtube_url:
-        try:
-            print(f"Downloading YouTube audio from: {youtube_url}")
-            youtube_to_audio(youtube_url, file_path)
-            print(f"WAV file saved to: {file_path}")
-        except Exception as e:
-            return jsonify({"error": str(e)}), 400
-    elif file:
         if file.filename == '':
             return jsonify({"error": "No selected file"}), 400
         try:
@@ -69,166 +92,153 @@ def upload_song():
         except Exception as e:
             return jsonify({"error": "Failed to save file"}), 500
 
-    # Set output path for separated stems
-    output_path = os.path.join(OUTPUT_FOLDER, str(song_entry.get('id')))
-    os.makedirs(output_path, exist_ok=True)
+        # Process the song - just separate stems
+        try:
+            separate(file_path, output_path)
+            print("Stem separation completed successfully.")
+        except Exception as e:
+            print(f"Stem separation failed: {e}")
+            return jsonify({"error": "Failed during stem separation processing"}), 500
 
-    # Prepare to run tasks in parallel
-    tasks = {
-        "separate": (separate, (file_path, output_path)),
-        "analyze_song": (analyze_song, (file_path,))
-    }
+        # Store session metadata in a simple JSON file for persistence
+        session_metadata = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "created_at": str(uuid.uuid4()),  # Simple timestamp placeholder
+            "available_stems": ['vocals', 'bass', 'drums', 'guitar', 'piano', 'other'],
+            "output_path": output_path,
+            "upload_path": temp_upload_dir
+        }
+        
+        # Save session metadata
+        metadata_file = os.path.join(temp_output_dir, "session_metadata.json")
+        with open(metadata_file, 'w') as f:
+            json.dump(session_metadata, f)
 
-    results = {}
-    try:
-        with ProcessPoolExecutor() as executor:
-            future_to_task = {executor.submit(func, *args): name for name, (func, args) in tasks.items()}
-            for future in as_completed(future_to_task):
-                task_name = future_to_task[future]
-                try:
-                    results[task_name] = future.result()
-                    print(f"Task '{task_name}' completed successfully.")
-                except Exception as exc:
-                    print(f"Task '{task_name}' failed: {exc}")
-                    return jsonify({"error": f"Failed during {task_name} processing"}), 500
+        # Clean up upload directory (we only need the output stems)
+        cleanup_temp_files(temp_upload_dir)
 
+        response_data = {
+            "session_id": session_id,
+            "message": "Song processed successfully",
+            "preview_url": f"/api/v1/session/{session_id}/preview",
+            "download_endpoints": {
+                "stems": f"/api/v1/download/stems/{session_id}",
+                "mixdown": f"/api/v1/download/mixdown/{session_id}"
+            },
+            "cleanup_url": f"/api/v1/session/{session_id}"
+        }
+
+        return jsonify(response_data), 200
+        
     except Exception as e:
-        print(f"Parallel task execution failed: {e}")
-        return jsonify({"error": "Failed to process tasks in parallel"}), 500
-
-    # Update song entry with analysis results
-    analyzed_song = results.get("analyze_song")
-    if analyzed_song:
-        song_entry['tempo_changes'] = analyzed_song.get('tempo_changes')
-        song_entry['song_key'] = analyzed_song.get('song_key')
-
-    # Upload stems to Supabase and update the database
-    stem_names = ['vocals', 'bass', 'drums', 'guitar', 'piano', 'other']
-    upload_song_stems_and_update_db(song_entry, output_path, stem_names)
-
-    # Cleanup temporary files
-    cleanup_temp_files(file_path)
-    cleanup_temp_files(output_path)
-
-    return jsonify({
-        "song": song_entry,
-        "message": "File uploaded, processed, and saved successfully",
-    }), 200
+        # Cleanup on error
+        cleanup_temp_files(temp_upload_dir)
+        cleanup_temp_files(temp_output_dir)
+        return jsonify({"error": f"Processing failed: {str(e)}"}), 500
     
 
-@song_bp.route('/song', methods=['GET'])
+
+@song_bp.route('/session/<session_id>/preview', methods=['GET'])
 @authorize
-def get_user_songs_route():
-    user_id = getattr(request, 'user_id', None)
-    songs = get_user_songs(user_id)
-
-    return jsonify({
-        "songs": songs,
-    }), 200
-
-
-@song_bp.route('/song/<song_id>', methods=['GET'])
-@authorize
-def get_song_route(song_id):
-    song = get_song(song_id)
-
-    return jsonify({
-        "song": song,
-        "message": "Song fetched successfully",
-    }), 200
-
-@song_bp.route('/song/sample', methods=['GET'])
-def get_sample_song_route():
-    song = get_song(402) # Sample song ID
-
-    return jsonify({
-        "song": song,
-        "message": "Song fetched successfully",
-    }), 200
-
-@song_bp.route('/song/<song_id>', methods=['DELETE'])
-@authorize
-def delete_song_route(song_id):
-    user_id = getattr(request, 'user_id', None)
-    song = delete_song(user_id, song_id)
-
-    return jsonify({
-        "song": song,
-        "message": "Song deleted successfully",
-    }), 200
-
-
-@song_bp.route('/song/<song_id>', methods=['PUT'])
-@authorize
-def update_song_route(song_id):
+def get_session_preview(session_id):
+    """
+    GET endpoint to retrieve session preview information for the multitrack player.
+    """
     try:
-        # Parse JSON body
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "Invalid JSON body"}), 400
+        # Get user ID from auth decorator
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return jsonify({"error": "User authentication required"}), 401
+        
+        # Validate session access
+        is_valid, session_metadata = validate_session_access(session_id, user_id)
+        if not is_valid:
+            return jsonify({"error": "Session not found or access denied"}), 404
+        
+        # Return preview information for the multitrack player
+        preview_data = {
+            "session_id": session_id,
+            "available_stems": session_metadata.get("available_stems", []),
+            "stem_urls": {
+                stem: f"/api/v1/session/{session_id}/stem/{stem}" 
+                for stem in session_metadata.get("available_stems", [])
+            }
+        }
+        
+        return jsonify(preview_data), 200
 
-        title = data.get('title')
-        artist = data.get('artist')
-
-        song = {}
-        if title:
-            song['title'] = title
-        if artist:
-            song['artist'] = artist
-
-        # Ensure there's something to update
-        if not song:
-            return jsonify({"error": "No fields to update"}), 400
-
-        updated_song = update_song(song_id, song)
-
-        return jsonify({
-            "song": updated_song,
-            "message": "Song updated successfully",
-        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# @song_bp.route('/song/info', methods=['GET'])
-# def song_info(user_id):
-#     artist = request.args.get('artist')
-#     name = request.args.get('name')
-    
-#     if not artist or not name:
-#         return jsonify({"error": "Both 'artist' and 'song' query parameters are required."}), 400
-
-#     info = get_song_info(artist, name)
-#     # popups = get_popup_info(artist, name)
-    
-#     return jsonify({"user_id": user_id, "artist": artist, "name": name, "info": info}), 200
-
-
-@song_bp.route('/song/<song_id>/download_stems', methods=['POST'])
+@song_bp.route('/session/<session_id>/stem/<stem_name>', methods=['GET'])
 @authorize
-def download_stems(song_id):
+def get_stem_audio(session_id, stem_name):
     """
-    POST endpoint to generate and download a ZIP file of stems.
+    GET endpoint to serve individual stem audio files for preview.
+    """
+    try:
+        # Get user ID from auth decorator
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return jsonify({"error": "User authentication required"}), 401
+        
+        # Validate session access
+        is_valid, session_metadata = validate_session_access(session_id, user_id)
+        if not is_valid:
+            return jsonify({"error": "Session not found or access denied"}), 404
+        
+        # Get the output path from session metadata
+        output_path = session_metadata.get("output_path")
+        stem_file = os.path.join(output_path, f"{stem_name}.wav")
+        
+        if not os.path.exists(stem_file):
+            return jsonify({"error": f"Stem '{stem_name}' not found"}), 404
+        
+        return send_file(stem_file, mimetype='audio/wav')
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@song_bp.route('/download/stems/<session_id>', methods=['POST'])
+@authorize
+def download_stems(session_id):
+    """
+    POST endpoint to generate and download a ZIP file of stems for a session.
     Expects JSON body with 'stems' and 'file_type' parameters.
     """
     try:
+        # Get user ID from auth decorator
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return jsonify({"error": "User authentication required"}), 401
+        
         # Parse JSON request body
         data = request.get_json()
         stems = data.get('stems', [])
-        file_type = data.get('file_type')
+        file_type = data.get('file_type', 'wav')
 
-        if not stems or not file_type or not song_id:
+        if not stems or not session_id:
             return jsonify({"error": "Missing required parameters"}), 400
 
-        # Generate ZIP file
-        zip_file_path = download_stems_zip(stems, file_type, song_id)
-
+        # Validate session access
+        is_valid, session_metadata = validate_session_access(session_id, user_id)
+        if not is_valid:
+            return jsonify({"error": "Session not found or access denied"}), 404
+        
+        # Get the output path from session metadata
+        output_path = session_metadata.get("output_path")
+        
+        # Generate ZIP file using the temporary output directory
+        zip_file_path = download_stems_zip(stems, file_type, session_id, output_path)
 
         # Return ZIP file as a response
         return send_file(
             zip_file_path,
             as_attachment=True,
-            download_name=f"Song_{song_id}_stems.zip",
+            download_name=f"Stems_{session_id}.zip",
             mimetype='application/zip'
         )
 
@@ -236,33 +246,78 @@ def download_stems(song_id):
         return jsonify({"error": str(e)}), 500
 
 
-@song_bp.route('/song/<song_id>/download_mixdown', methods=['POST'])
+@song_bp.route('/download/mixdown/<session_id>', methods=['POST'])
 @authorize
-def mixdown_song(song_id):
+def mixdown_song(session_id):
     """
     POST endpoint to mix selected stems into a single audio file and return a ZIP.
 
     Expects JSON body with 'stems' and optional 'file_type' parameters.
     """
     try:
+        # Get user ID from auth decorator
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return jsonify({"error": "User authentication required"}), 401
+        
         # Parse JSON request body
         data = request.get_json()
         stems = data.get('stems', [])
         file_type = data.get('file_type', 'mp3')
 
-        if not stems or not song_id:
+        if not stems or not session_id:
             return jsonify({"error": "Missing required parameters"}), 400
 
-        # Mix and create ZIP
-        zip_file_path = mix_and_zip_stems(stems, song_id, file_type)
+        # Validate session access
+        is_valid, session_metadata = validate_session_access(session_id, user_id)
+        if not is_valid:
+            return jsonify({"error": "Session not found or access denied"}), 404
+        
+        # Get the output path from session metadata
+        output_path = session_metadata.get("output_path")
+
+        # Mix and create ZIP using the temporary output directory
+        zip_file_path = mix_and_zip_stems(stems, session_id, file_type, output_path)
 
         # Return ZIP file as a response
         return send_file(
             zip_file_path,
             as_attachment=True,
-            download_name=f"Song_{song_id}_mixdown.zip",
+            download_name=f"Mixdown_{session_id}.zip",
             mimetype='application/zip'
         )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@song_bp.route('/session/<session_id>', methods=['DELETE'])
+@authorize
+def cleanup_session(session_id):
+    """
+    DELETE endpoint to clean up session data when frontend is done.
+    """
+    try:
+        # Get user ID from auth decorator
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return jsonify({"error": "User authentication required"}), 401
+        
+        # Validate session access
+        is_valid, session_metadata = validate_session_access(session_id, user_id)
+        if not is_valid:
+            return jsonify({"error": "Session not found or access denied"}), 404
+        
+        # Get the output path from session metadata
+        output_path = session_metadata.get("output_path")
+        
+        # Clean up the session directory
+        cleanup_temp_files(output_path)
+        
+        return jsonify({
+            "message": "Session cleaned up successfully",
+            "session_id": session_id
+        }), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500

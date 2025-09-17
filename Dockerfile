@@ -36,5 +36,5 @@ RUN mkdir -p /tmp/uploads /tmp/output
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 
-# Run the Flask app with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--worker-class", "sync", "--timeout", "300", "--log-level", "info", "flaskr:create_app()"]
+# Run the Flask app with Gunicorn with debug logging
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--worker-class", "sync", "--timeout", "300", "--log-level", "debug", "--capture-output", "flaskr:create_app()"]
