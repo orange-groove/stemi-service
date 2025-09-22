@@ -4,7 +4,7 @@ from flask import Flask, Blueprint, request, jsonify, send_file
 from flaskr.utils.helpers import (
     download_stems_zip,
     mix_and_zip_stems,
-    separate, 
+    separate_with_runpod,
     cleanup_temp_files,
 )
 
@@ -105,11 +105,12 @@ def process_song():
         except Exception as e:
             return jsonify({"error": "Failed to save file"}), 500
 
-        # Process the song - just separate stems
+        # Process the song - separate stems using RunPod
         try:
             print(f"Starting stem separation for {file_path} -> {output_path}")
-            separate(file_path, output_path)
+            separation_result = separate_with_runpod(file_path, output_path)
             print("Stem separation completed successfully.")
+            print(f"Separation result: {separation_result}")
         except Exception as e:
             print(f"Stem separation failed: {e}")
             import traceback
@@ -117,11 +118,12 @@ def process_song():
             return jsonify({"error": "Failed during stem separation processing"}), 500
 
         # Store session metadata in a simple JSON file for persistence
+        available_stems = separation_result.get("available_stems", ['vocals', 'bass', 'drums', 'guitar', 'piano', 'other'])
         session_metadata = {
             "session_id": session_id,
             "user_id": user_id,
             "created_at": str(uuid.uuid4()),  # Simple timestamp placeholder
-            "available_stems": ['vocals', 'bass', 'drums', 'guitar', 'piano', 'other'],
+            "available_stems": available_stems,
             "output_path": output_path,
             "upload_path": temp_upload_dir
         }

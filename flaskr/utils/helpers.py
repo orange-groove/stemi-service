@@ -16,6 +16,8 @@ import numpy as np
 from yt_dlp import YoutubeDL
 import torch
 import demucs
+import base64
+import time
 
 logger = logging.getLogger(__name__)
 # Initialize OpenAI client
@@ -125,6 +127,221 @@ def separate(in_path, out_path):
     except Exception as e:
         logger.error(f"Error during stem separation: {str(e)}")
         raise
+
+
+def encode_audio_to_base64(file_path):
+    """
+    Encode an audio file to base64 string for RunPod API.
+    
+    Args:
+        file_path (str): Path to the audio file
+        
+    Returns:
+        str: Base64 encoded audio file
+    """
+    try:
+        with open(file_path, "rb") as audio_file:
+            audio_data = audio_file.read()
+            audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+            return audio_b64
+    except Exception as e:
+        logger.error(f"Error encoding audio file to base64: {e}")
+        raise
+
+
+def submit_to_runpod(audio_b64, stems=None):
+    """
+    Submit audio separation job to RunPod API.
+    
+    Args:
+        audio_b64 (str): Base64 encoded audio file
+        stems (list): List of stems to separate (default: all available)
+        
+    Returns:
+        str: Job ID for tracking the separation
+    """
+    if not Config.RUNPOD_API_KEY:
+        raise ValueError("RUNPOD_API_KEY not configured")
+    
+    if stems is None:
+        stems = ["vocals", "drums", "bass", "guitar", "piano", "other"]
+    
+    url = f"https://api.runpod.ai/v2/{Config.RUNPOD_ENDPOINT_ID}/run"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {Config.RUNPOD_API_KEY}"
+    }
+    
+    payload = {
+        "input": {
+            "audio_file": audio_b64,
+            "stems": stems
+        }
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        
+        result = response.json()
+        job_id = result.get("id")
+        
+        if not job_id:
+            raise ValueError("No job ID returned from RunPod API")
+            
+        logger.info(f"Submitted job to RunPod with ID: {job_id}")
+        return job_id
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error submitting to RunPod: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error submitting to RunPod: {e}")
+        raise
+
+
+def check_runpod_status(job_id):
+    """
+    Check the status of a RunPod separation job.
+    
+    Args:
+        job_id (str): Job ID returned from submit_to_runpod
+        
+    Returns:
+        dict: Status information including completion status and results
+    """
+    if not Config.RUNPOD_API_KEY:
+        raise ValueError("RUNPOD_API_KEY not configured")
+    
+    url = f"https://api.runpod.ai/v2/{Config.RUNPOD_ENDPOINT_ID}/status/{job_id}"
+    
+    headers = {
+        "Authorization": f"Bearer {Config.RUNPOD_API_KEY}"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        
+        result = response.json()
+        return result
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error checking RunPod status: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error checking RunPod status: {e}")
+        raise
+
+
+def download_stem_from_url(stem_url, output_path):
+    """
+    Download a stem file from URL to local path.
+    
+    Args:
+        stem_url (str): URL of the stem file
+        output_path (str): Local path to save the stem file
+        
+    Returns:
+        str: Path to the downloaded file
+    """
+    try:
+        response = requests.get(stem_url)
+        response.raise_for_status()
+        
+        with open(output_path, 'wb') as f:
+            f.write(response.content)
+            
+        logger.info(f"Downloaded stem from {stem_url} to {output_path}")
+        return output_path
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error downloading stem from {stem_url}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error downloading stem: {e}")
+        raise
+
+
+def separate_with_runpod(in_path, out_path, stems=None, max_wait_time=300):
+    """
+    Separate stems using RunPod API and download results to local directory.
+    
+    Args:
+        in_path (str): Path to input audio file
+        out_path (str): Path to output directory for stems
+        stems (list): List of stems to separate (default: all available)
+        max_wait_time (int): Maximum time to wait for completion in seconds
+        
+    Returns:
+        dict: Information about the separated stems
+        
+    Raises:
+        ValueError: If RunPod API key is not configured
+        Exception: If RunPod separation fails or times out
+    """
+    if not Config.RUNPOD_API_KEY:
+        raise ValueError("RunPod API key not configured. Please set RUNPOD_API_KEY environment variable.")
+    
+    if stems is None:
+        stems = ["vocals", "drums", "bass", "guitar", "piano", "other"]
+    
+    os.makedirs(out_path, exist_ok=True)
+    
+    # Encode audio file to base64
+    logger.info(f"Encoding audio file: {in_path}")
+    audio_b64 = encode_audio_to_base64(in_path)
+    
+    # Submit job to RunPod
+    logger.info("Submitting separation job to RunPod")
+    job_id = submit_to_runpod(audio_b64, stems)
+    
+    # Poll for completion
+    logger.info(f"Waiting for RunPod job {job_id} to complete...")
+    start_time = time.time()
+    
+    while time.time() - start_time < max_wait_time:
+        status_result = check_runpod_status(job_id)
+        status = status_result.get("status")
+        
+        if status == "COMPLETED":
+            logger.info("RunPod job completed successfully")
+            output = status_result.get("output", {})
+            stem_urls = output.get("stem_urls", {})
+            available_stems = output.get("available_stems", [])
+            
+            # Download all available stems
+            downloaded_stems = {}
+            for stem_name in available_stems:
+                if stem_name in stem_urls:
+                    stem_url = stem_urls[stem_name]
+                    output_file = os.path.join(out_path, f"{stem_name}.wav")
+                    download_stem_from_url(stem_url, output_file)
+                    downloaded_stems[stem_name] = output_file
+            
+            logger.info(f"Downloaded {len(downloaded_stems)} stems to {out_path}")
+            return {
+                "status": "completed",
+                "stems": downloaded_stems,
+                "available_stems": available_stems,
+                "stem_urls": stem_urls
+            }
+            
+        elif status == "FAILED":
+            error_msg = status_result.get("error", "Unknown error")
+            logger.error(f"RunPod job failed: {error_msg}")
+            raise Exception(f"RunPod separation failed: {error_msg}")
+            
+        elif status in ["IN_QUEUE", "IN_PROGRESS"]:
+            logger.info(f"Job status: {status}, waiting...")
+            time.sleep(5)  # Wait 5 seconds before checking again
+        else:
+            logger.warning(f"Unknown job status: {status}")
+            time.sleep(5)
+    
+    # Timeout
+    raise Exception(f"RunPod job timed out after {max_wait_time} seconds")
 
 
 def create_song_entry(title=None, artist=None, user_id=None, image_url=None, release_date=None):

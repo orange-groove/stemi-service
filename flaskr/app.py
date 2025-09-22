@@ -3,6 +3,11 @@ import logging
 import torch
 from flask import Flask
 from flask_cors import CORS
+from dotenv import load_dotenv
+
+# Load .env before importing Config so os.getenv sees values
+load_dotenv()
+
 from flaskr.config import Config
 from flaskr.routes import routes_bp
 
