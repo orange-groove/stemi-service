@@ -27,13 +27,18 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
-async function cleanupFromDB(hours: number) {
+async function cleanupFromDB(hours: number, minutesOverride?: number) {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const BUCKET = "stems";
   const client = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
+  let ms = hours * 60 * 60 * 1000;
+  if (typeof minutesOverride === 'number' && minutesOverride > 0) {
+    const minutes = Math.max(1, Math.min(60, Math.floor(minutesOverride)));
+    ms = minutes * 60 * 1000;
+  }
+  const cutoff = new Date(Date.now() - ms);
 
   // 1) find sessions older than cutoff
   const { data: sessions, error } = await client
@@ -72,15 +77,18 @@ async function cleanupFromDB(hours: number) {
 Deno.serve(async (req) => {
   try {
     let hours = 24
-    // Allow overriding via query (?hours=)
+    let minutesOverride: number | undefined = undefined
+    // Allow overriding via query (?hours= or ?minutes=)
     try {
       const url = new URL(req.url)
       const q = url.searchParams.get("hours")
       if (q) hours = Math.max(1, parseInt(q)) || 24
+      const m = url.searchParams.get("minutes")
+      if (m) minutesOverride = Math.max(1, parseInt(m)) || 1
     } catch (_) {}
 
-    const result = await cleanupFromDB(hours)
-    return jsonResponse({ message: "cleanup completed", hours, result })
+    const result = await cleanupFromDB(hours, minutesOverride)
+    return jsonResponse({ message: "cleanup completed", hours, minutes: minutesOverride, result })
   } catch (e) {
     return jsonResponse({ error: (e as Error).message }, 500)
   }
