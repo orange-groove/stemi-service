@@ -1,11 +1,13 @@
 import os
 
 from flask import Flask, Blueprint, request, jsonify, send_file
+from flaskr.supabase_client import supabase
 from flaskr.utils.helpers import (
     download_stems_zip,
     mix_and_zip_stems,
     separate_with_runpod,
     cleanup_temp_files,
+    cleanup_expired_sessions,
 )
 
 from flaskr.decorators.auth import authorize
@@ -122,7 +124,7 @@ def process_song():
         session_metadata = {
             "session_id": session_id,
             "user_id": user_id,
-            "created_at": str(uuid.uuid4()),  # Simple timestamp placeholder
+            "created_at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
             "available_stems": available_stems,
             "output_path": output_path,
             "upload_path": temp_upload_dir
@@ -145,6 +147,19 @@ def process_song():
         cleanup_temp_files(temp_upload_dir)
         print(f"Cleaned up upload directory: {temp_upload_dir}")
         print(f"Output directory still exists: {temp_output_dir}")
+
+        # Record session in Supabase for scheduled cleanup of storage
+        try:
+            # Assume stems are stored under bucket prefix 'stems/<session_id>'
+            storage_prefix_root = 'stems'
+            storage_prefix = f"{storage_prefix_root}/{session_id}"
+            supabase.table('sessions').insert({
+                'session_id': session_id,
+                'user_id': user_id,
+                'storage_prefix': storage_prefix,
+            }).execute()
+        except Exception as e:
+            print(f"Warning: failed to record session in DB: {e}")
 
         response_data = {
             "session_id": session_id,
@@ -350,4 +365,19 @@ def cleanup_session(session_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+
+@song_bp.route('/cleanup', methods=['POST'])
+def cleanup_endpoint():
+    """
+    POST endpoint to trigger cleanup of expired sessions.
+    Optional query param: hours (default 24)
+    Intended to be called by Supabase cron/Scheduler.
+    """
+    try:
+        hours = request.args.get('hours', default=24, type=int)
+        cleanup_expired_sessions(max_age_hours=hours)
+        return jsonify({"message": "Cleanup completed", "max_age_hours": hours}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 

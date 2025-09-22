@@ -18,6 +18,7 @@ import torch
 import demucs
 import base64
 import time
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 # Initialize OpenAI client
@@ -574,6 +575,128 @@ def mix_and_zip_stems(stem_names, session_id, output_format="mp3", output_path=N
         # Cleanup temporary files except the ZIP
         if os.path.exists(mixed_file_path):
             os.remove(mixed_file_path)
+
+
+def _parse_created_at(value):
+    """
+    Best-effort parse of created_at values stored in session metadata.
+    Supports ISO timestamps. Returns datetime in UTC or None.
+    """
+    if not value:
+        return None
+    try:
+        # Expect ISO 8601
+        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _delete_supabase_objects_for_session(session_metadata):
+    """
+    Remove Supabase storage objects for a session if stem_urls are present.
+    Falls back to deleting by known prefix pattern using session_id if needed.
+    """
+    try:
+        stem_urls = session_metadata.get("stem_urls") or {}
+        objects_to_remove = []
+
+        # Fast path: remove each object from stem_urls
+        for _, url in stem_urls.items():
+            # URL format: https://<proj>.supabase.co/storage/v1/object/public/<bucket>/<path>
+            parts = url.split('/storage/v1/object/public/')
+            if len(parts) == 2:
+                bucket_and_path = parts[1]
+                first_slash = bucket_and_path.find('/')
+                if first_slash != -1:
+                    bucket = bucket_and_path[:first_slash]
+                    path = bucket_and_path[first_slash + 1:]
+                    if bucket and path:
+                        objects_to_remove.append((bucket, path))
+
+        # Remove collected objects grouped by bucket
+        by_bucket = {}
+        for bucket, path in objects_to_remove:
+            by_bucket.setdefault(bucket, []).append(path)
+
+        for bucket, paths in by_bucket.items():
+            try:
+                supabase.storage.from_(bucket).remove(paths)
+            except Exception:
+                pass
+
+        # If no explicit URLs, try deleting by session_id prefix if known
+        if not objects_to_remove:
+            session_id = session_metadata.get("session_id")
+            if session_id:
+                # Common path pattern seen in URLs: stems/ff7e.../<stem>.wav
+                # Adjust BUCKET name if needed via Config.SUPABASE_BUCKET
+                bucket = Config.SUPABASE_BUCKET
+                try:
+                    # List and delete all with that prefix
+                    listing = supabase.storage.from_(bucket).list(
+                        path=f"{session_id}",
+                        search=None
+                    )
+                    delete_paths = [f"{session_id}/{item.get('name')}" for item in listing or [] if item.get('name')]
+                    if delete_paths:
+                        supabase.storage.from_(bucket).remove(delete_paths)
+                except Exception:
+                    pass
+    except Exception:
+        # Never fail cleanup on storage errors
+        pass
+
+
+def cleanup_expired_sessions(max_age_hours: int = 24):
+    """
+    Delete local temp session directories and Supabase objects older than max_age_hours.
+    Safe to run periodically.
+    """
+    try:
+        temp_base = tempfile.gettempdir()
+        now_utc = datetime.now(timezone.utc)
+        cutoff = now_utc - timedelta(hours=max_age_hours)
+
+        # Find all output_ session dirs
+        for name in os.listdir(temp_base):
+            if not name.startswith('output_'):
+                continue
+            session_dir = os.path.join(temp_base, name)
+            if not os.path.isdir(session_dir):
+                continue
+
+            metadata_file = os.path.join(session_dir, 'session_metadata.json')
+            created_at_dt = None
+            session_metadata = {}
+
+            if os.path.exists(metadata_file):
+                try:
+                    with open(metadata_file, 'r') as f:
+                        session_metadata = json.load(f)
+                    created_at_dt = _parse_created_at(session_metadata.get('created_at'))
+                except Exception:
+                    created_at_dt = None
+
+            # If we have a timestamp, prefer it; else use folder mtime
+            if created_at_dt is None:
+                try:
+                    mtime = os.path.getmtime(session_dir)
+                    created_at_dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+                except Exception:
+                    continue
+
+            if created_at_dt <= cutoff:
+                # Attempt to delete remote objects first
+                _delete_supabase_objects_for_session(session_metadata)
+                # Remove local directory
+                try:
+                    shutil.rmtree(session_dir)
+                except Exception:
+                    pass
+    except Exception:
+        # Never raise from background cleanup
+        pass
 
 
 def youtube_to_audio(youtube_url, output_file):

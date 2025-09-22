@@ -42,6 +42,7 @@ def create_app():
 
     app.debug = True
     logger.info("Application created successfully")
+
     return app
 
 if __name__ == '__main__':
