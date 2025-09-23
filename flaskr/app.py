@@ -16,7 +16,12 @@ logger = logging.getLogger(__name__)
 
 def create_app():
     app = Flask(__name__)
-    CORS(app)
+    CORS(app, origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://www.stemi.app",
+        "https://stemi.app"
+    ])
     app.config.from_object(Config)  # Load the config
 
     # Register the routes blueprint with /api/v1 prefix
