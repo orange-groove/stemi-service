@@ -150,9 +150,8 @@ def process_song():
 
         # Record session in Supabase for scheduled cleanup of storage
         try:
-            # Assume stems are stored under bucket prefix 'stems/<session_id>'
-            storage_prefix_root = 'stems'
-            storage_prefix = f"{storage_prefix_root}/{session_id}"
+            # Bucket is 'stems'; objects live under '<session_id>/'
+            storage_prefix = session_id
             supabase.table('sessions').insert({
                 'session_id': session_id,
                 'user_id': user_id,

@@ -55,7 +55,11 @@ async function cleanupFromDB(hours: number, minutesOverride?: number) {
 
   // 2) delete objects under each storage_prefix
   for (const row of sessions) {
-    const prefix: string = row.storage_prefix;
+    let prefix: string = row.storage_prefix;
+    // Normalize legacy values like 'stems/<session_id>' to '<session_id>'
+    if (prefix.startsWith('stems/')) {
+      prefix = prefix.slice('stems/'.length);
+    }
     // list files under prefix (paginate if needed later)
     const list = await client.storage.from(BUCKET).list(prefix, { limit: 1000 });
     if (list.error) continue;
