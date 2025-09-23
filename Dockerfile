@@ -22,7 +22,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python packages with verbose output
-RUN pip3 install --no-cache-dir -v -r requirements.txt && \
+RUN pip3 install --no-cache-dir -v -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
