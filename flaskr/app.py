@@ -1,6 +1,5 @@
 import os
 import logging
-import torch
 from flask import Flask
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -27,18 +26,7 @@ def create_app():
     def healthz():
         return 'Ok', 200
 
-    @app.route('/cuda', methods=['GET'])
-    def cuda_check():
-        cuda_available = torch.cuda.is_available()
-        if cuda_available:
-            device_count = torch.cuda.device_count()
-            device_name = torch.cuda.get_device_name(0)
-            return {
-                'cuda_available': True,
-                'device_count': device_count,
-                'device_name': device_name
-            }, 200
-        return {'cuda_available': False}, 200
+    # Removed CUDA check; inference now runs on external service
 
     app.debug = True
     logger.info("Application created successfully")

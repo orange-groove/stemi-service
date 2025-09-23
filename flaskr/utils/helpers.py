@@ -1,10 +1,7 @@
 import os
 import shutil
-import demucs.separate
 from flaskr.supabase_client import supabase
 import logging
-import librosa
-import soundfile as sf
 # from openai import OpenAI
 import json
 from flaskr.config import Config
@@ -12,10 +9,7 @@ import requests
 import tempfile
 import zipfile
 from pydub import AudioSegment
-import numpy as np
 from yt_dlp import YoutubeDL
-import torch
-import demucs
 import base64
 import time
 from datetime import datetime, timezone, timedelta
@@ -32,102 +26,7 @@ note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 logger = logging.getLogger(__name__)
 
-def separate(in_path, out_path):
-    """
-    Separates stems using Demucs and stores WAV files in the specified output directory.
-    Optimized for GPU acceleration and better resource management.
-    """
-    # Check if GPU is available
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    logger.info(f"Using device: {device}")
-    
-    in_path = os.path.abspath(in_path)
-    out_path = os.path.abspath(out_path)
-    os.makedirs(out_path, exist_ok=True)
-
-    try:
-        # Use the simpler demucs approach
-        from demucs.separate import main as demucs_main
-        import sys
-        import tempfile
-        
-        # Create a temporary directory for demucs output
-        temp_demucs_dir = tempfile.mkdtemp()
-        
-        # Save original sys.argv and replace with demucs arguments
-        original_argv = sys.argv.copy()
-        try:
-            sys.argv = [
-                'demucs.separate',
-                '-n', 'htdemucs_6s',
-                '-d', device,
-                '-o', temp_demucs_dir,
-                in_path
-            ]
-            
-            # Run demucs
-            demucs_main()
-            
-            # Find the output files
-            import glob
-            import shutil
-            
-            # Look for the demucs output directory - htdemucs_6s creates nested structure
-            # First find the song directory inside htdemucs_6s
-            song_dirs = glob.glob(os.path.join(temp_demucs_dir, 'htdemucs_6s', '*'))
-            demucs_output_dirs = []
-            
-            for song_dir in song_dirs:
-                if os.path.isdir(song_dir):
-                    demucs_output_dirs.append(song_dir)
-                    break
-            
-            if not demucs_output_dirs:
-                # Fallback to other model patterns
-                demucs_output_dirs = glob.glob(os.path.join(temp_demucs_dir, 'htdemucs', '*'))
-            
-            logger.info(f"Looking for demucs output in: {temp_demucs_dir}")
-            logger.info(f"Found demucs output dirs: {demucs_output_dirs}")
-            
-            if demucs_output_dirs:
-                demucs_output_dir = demucs_output_dirs[0]
-                logger.info(f"Using demucs output dir: {demucs_output_dir}")
-                
-                # List all files in the demucs output directory
-                all_files = os.listdir(demucs_output_dir)
-                logger.info(f"All files in demucs output: {all_files}")
-                
-                # Copy the stem files to our output directory
-                stem_files = glob.glob(os.path.join(demucs_output_dir, '*.wav'))
-                logger.info(f"Found demucs output files: {stem_files}")
-                
-                stem_names = ['vocals', 'bass', 'drums', 'guitar', 'piano', 'other']
-                
-                for i, stem_file in enumerate(stem_files):
-                    if i < len(stem_names):
-                        stem_name = stem_names[i]
-                        output_file = os.path.join(out_path, f"{stem_name}.wav")
-                        shutil.copy2(stem_file, output_file)
-                        logger.info(f"Copied {stem_file} to {output_file}")
-                    else:
-                        logger.warning(f"Extra stem file found: {stem_file}")
-                
-                # Check what files were actually created
-                created_files = glob.glob(os.path.join(out_path, '*.wav'))
-                logger.info(f"Final output files created: {created_files}")
-                
-                # Clean up
-                shutil.rmtree(temp_demucs_dir)
-            else:
-                raise ValueError("No demucs output found")
-                
-        finally:
-            # Restore original sys.argv
-            sys.argv = original_argv
-            
-    except Exception as e:
-        logger.error(f"Error during stem separation: {str(e)}")
-        raise
+# Removed local Demucs-based separation; all separation is handled by RunPod
 
 
 def encode_audio_to_base64(file_path):
@@ -405,36 +304,13 @@ def recognize_song(file_path):
 
 
 def combine_stems(stem_paths, output_path):
-    combined_audio_data = None
-    sr = None
-    for stem_path in stem_paths:
-        y, sr = librosa.load(stem_path, sr=None)
-        if combined_audio_data is None:
-            combined_audio_data = y
-        else:
-            combined_audio_data += y
-
-    if combined_audio_data is not None and sr is not None:
-        combined_audio_data /= len(stem_paths)  # Normalize by the number of stems
-        sf.write(output_path, combined_audio_data, sr)
-    else:
-        logger.error("No audio data to combine.")
-        raise ValueError("No audio data to combine.")
+    """Deprecated: use mix_and_zip_stems for pydub-based mixing."""
+    raise NotImplementedError("combine_stems is removed; use mix_and_zip_stems instead")
 
 
 def process_audio_files(stem_paths, combined_audio_path):
-    """Combine audio files by loading them in chunks to reduce memory usage."""
-    combined_audio_data = None
-    sr = None
-    for stem_path in stem_paths:
-        y, sr = librosa.load(stem_path, sr=None)
-        if combined_audio_data is None:
-            combined_audio_data = y
-        else:
-            combined_audio_data += y
-    if combined_audio_data is not None and sr is not None:
-        combined_audio_data /= len(stem_paths)  # Normalize
-        sf.write(combined_audio_path, combined_audio_data, sr)
+    """Deprecated: use mix_and_zip_stems for pydub-based mixing."""
+    raise NotImplementedError("process_audio_files is removed; use mix_and_zip_stems instead")
 
 
 def cleanup_temp_files(*paths):
