@@ -16,12 +16,16 @@ logger = logging.getLogger(__name__)
 
 def create_app():
     app = Flask(__name__)
-    CORS(app, origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://www.stemi.app",
-        "https://stemi.app"
-    ])
+    CORS(app, 
+         origins=[
+             "http://localhost:3000",
+             "http://127.0.0.1:3000", 
+             "https://www.stemi.app",
+             "https://stemi.app"
+         ],
+         supports_credentials=True,
+         allow_headers=['Content-Type', 'Authorization'],
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
     app.config.from_object(Config)  # Load the config
 
     # Register the routes blueprint with /api/v1 prefix
@@ -30,6 +34,16 @@ def create_app():
     @app.route('/healthz', methods=['GET'])
     def healthz():
         return 'Ok', 200
+
+    @app.route('/debug/config', methods=['GET'])
+    def debug_config():
+        return {
+            'stripe_secret_key_set': bool(Config.STRIPE_SECRET_KEY),
+            'stripe_price_id_set': bool(Config.STRIPE_PRICE_ID), 
+            'stripe_webhook_secret_set': bool(Config.STRIPE_WEBHOOK_SECRET),
+            'stripe_secret_key_length': len(Config.STRIPE_SECRET_KEY or ''),
+            'stripe_price_id_starts_with': (Config.STRIPE_PRICE_ID or '')[:10] + '...' if Config.STRIPE_PRICE_ID else None
+        }
 
     # Removed CUDA check; inference now runs on external service
 
