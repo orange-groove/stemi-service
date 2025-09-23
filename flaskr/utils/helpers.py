@@ -26,8 +26,6 @@ note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 logger = logging.getLogger(__name__)
 
-# Removed local Demucs-based separation; all separation is handled by RunPod
-
 
 def encode_audio_to_base64(file_path):
     """
