@@ -160,3 +160,52 @@ def stripe_webhook():
     return jsonify({"received": True}), 200
 
 
+@billing_bp.route('/billing/subscription', methods=['DELETE'])
+@authorize
+def cancel_subscription():
+    """
+    Cancel the user's active subscription.
+    """
+    if not Config.STRIPE_SECRET_KEY:
+        return jsonify({"error": "Stripe not configured"}), 500
+    
+    user_id = getattr(request, 'user_id', None)
+    if not user_id:
+        return jsonify({"error": "User authentication required"}), 401
+    
+    try:
+        # Get user's entitlement record to find their subscription
+        result = supabase.table('entitlements').select('stripe_subscription_id, stripe_customer_id').eq('user_id', user_id).single().execute()
+        
+        if not result.data:
+            return jsonify({"error": "No subscription found"}), 404
+        
+        subscription_id = result.data.get('stripe_subscription_id')
+        if not subscription_id:
+            return jsonify({"error": "No active subscription found"}), 404
+        
+        # Cancel the subscription in Stripe
+        stripe.api_key = Config.STRIPE_SECRET_KEY
+        canceled_subscription = stripe.Subscription.cancel(subscription_id)
+        
+        # Update entitlements in database (webhook will also handle this)
+        supabase.table('entitlements').update({
+            'active': False,
+            'status': 'canceled'
+        }).eq('user_id', user_id).execute()
+        
+        return jsonify({
+            "message": "Subscription canceled successfully",
+            "subscription_id": subscription_id,
+            "canceled_at": canceled_subscription.canceled_at,
+            "status": canceled_subscription.status
+        }), 200
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error canceling subscription: {e}")
+        return jsonify({"error": f"Failed to cancel subscription: {str(e)}"}), 400
+    except Exception as e:
+        logger.error(f"Error canceling subscription: {e}")
+        return jsonify({"error": f"Failed to cancel subscription: {str(e)}"}), 500
+
+
