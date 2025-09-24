@@ -8,6 +8,12 @@ from flaskr.utils.helpers import (
     separate_with_runpod,
     cleanup_temp_files,
     cleanup_expired_sessions,
+    check_usage_limit,
+    increment_user_usage,
+    get_user_monthly_usage,
+    get_user_monthly_limit,
+    is_user_premium,
+    get_current_month_year,
 )
 
 from flaskr.decorators.auth import authorize
@@ -78,6 +84,17 @@ def process_song():
     user_id = getattr(request, 'user_id', None)
     if not user_id:
         return jsonify({"error": "User authentication required"}), 401
+    
+    # Check usage limits before processing
+    usage_check = check_usage_limit(user_id)
+    if not usage_check['can_process']:
+        return jsonify({
+            "error": "Monthly usage limit exceeded",
+            "current_usage": usage_check['current_usage'],
+            "monthly_limit": usage_check['monthly_limit'],
+            "is_premium": usage_check['is_premium'],
+            "message": f"You have reached your monthly limit of {usage_check['monthly_limit']} songs. {'Upgrade to premium for more processing.' if not usage_check['is_premium'] else 'Your limit resets next month.'}"
+        }), 429  # Too Many Requests
     
     # Generate unique session ID for this processing request
     session_id = str(uuid.uuid4())
@@ -159,6 +176,11 @@ def process_song():
             }).execute()
         except Exception as e:
             print(f"Warning: failed to record session in DB: {e}")
+
+        # Increment user's monthly usage count
+        increment_success = increment_user_usage(user_id)
+        if not increment_success:
+            print(f"Warning: failed to increment usage count for user {user_id}")
 
         response_data = {
             "session_id": session_id,
@@ -379,4 +401,30 @@ def cleanup_endpoint():
         return jsonify({"message": "Cleanup completed", "max_age_hours": hours}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@song_bp.route('/usage', methods=['GET'])
+@authorize
+def get_usage():
+    """
+    Get current user's monthly usage and limits.
+    """
+    user_id = getattr(request, 'user_id', None)
+    if not user_id:
+        return jsonify({"error": "User authentication required"}), 401
+    
+    try:
+        usage_info = check_usage_limit(user_id)
+        
+        return jsonify({
+            "current_usage": usage_info['current_usage'],
+            "monthly_limit": usage_info['monthly_limit'], 
+            "remaining": usage_info['remaining'],
+            "can_process": usage_info['can_process'],
+            "is_premium": usage_info['is_premium'],
+            "month": get_current_month_year()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to get usage info: {str(e)}"}), 500
 

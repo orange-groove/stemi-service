@@ -2,7 +2,6 @@ import os
 import shutil
 from flaskr.supabase_client import supabase
 import logging
-# from openai import OpenAI
 import json
 from flaskr.config import Config
 import requests
@@ -13,17 +12,12 @@ from yt_dlp import YoutubeDL
 import base64
 import time
 from datetime import datetime, timezone, timedelta
-
-logger = logging.getLogger(__name__)
-# Initialize OpenAI client
-# client = OpenAI()
+# Usage limits configuration
+FREE_MONTHLY_LIMIT = 3   # Free users get 3 songs per month
+PAID_MONTHLY_LIMIT = 100  # Paid users get 100 songs per month
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-
 logger = logging.getLogger(__name__)
 
 
@@ -618,3 +612,85 @@ def youtube_to_audio(youtube_url, output_file):
         return output_file
     except Exception as e:
         raise Exception(f"Error downloading or processing YouTube audio: {e}")
+
+
+# Usage tracking functions
+def get_current_month_year():
+    """Get current month in YYYY-MM format"""
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def is_user_premium(user_id):
+    """Check if user has active subscription"""
+    try:
+        result = supabase.table('entitlements').select('active').eq('user_id', user_id).execute()
+        if result.data:
+            return result.data[0].get('active', False)
+        return False
+    except Exception as e:
+        logger.error(f"Error checking user premium status: {e}")
+        return False
+
+
+def get_user_monthly_usage(user_id):
+    """Get user's current monthly usage"""
+    try:
+        month_year = get_current_month_year()
+        result = supabase.table('usage_limits').select('songs_processed').eq('user_id', user_id).eq('month_year', month_year).execute()
+        
+        if result.data:
+            return result.data[0]['songs_processed']
+        return 0
+    except Exception as e:
+        logger.error(f"Error getting user monthly usage: {e}")
+        return 0
+
+
+def get_user_monthly_limit(user_id):
+    """Get user's monthly limit based on subscription status"""
+    if is_user_premium(user_id):
+        return PAID_MONTHLY_LIMIT
+    return FREE_MONTHLY_LIMIT
+
+
+def check_usage_limit(user_id):
+    """Check if user has exceeded their monthly limit"""
+    current_usage = get_user_monthly_usage(user_id)
+    monthly_limit = get_user_monthly_limit(user_id)
+    is_premium = is_user_premium(user_id)
+    
+    return {
+        'can_process': current_usage < monthly_limit,
+        'current_usage': current_usage,
+        'monthly_limit': monthly_limit,
+        'remaining': max(0, monthly_limit - current_usage),
+        'is_premium': is_premium
+    }
+
+
+def increment_user_usage(user_id):
+    """Increment user's monthly usage count"""
+    try:
+        month_year = get_current_month_year()
+        
+        # Try to increment existing record
+        result = supabase.table('usage_limits').select('songs_processed').eq('user_id', user_id).eq('month_year', month_year).execute()
+        
+        if result.data:
+            # Update existing record
+            new_count = result.data[0]['songs_processed'] + 1
+            supabase.table('usage_limits').update({
+                'songs_processed': new_count
+            }).eq('user_id', user_id).eq('month_year', month_year).execute()
+        else:
+            # Create new record
+            supabase.table('usage_limits').insert({
+                'user_id': user_id,
+                'month_year': month_year,
+                'songs_processed': 1
+            }).execute()
+            
+        return True
+    except Exception as e:
+        logger.error(f"Error incrementing user usage: {e}")
+        return False
